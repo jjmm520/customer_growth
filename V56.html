@@ -1,0 +1,2517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>客户成长管理系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@4.9.0/map/js/china.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
+    <style>
+        .sort-icon::after { content: '↕'; margin-left: 2px; color: #cbd5e1; font-size: 10px; }
+        .sort-asc::after { content: '↑'; color: #3b82f6; font-weight: bold; }
+        .sort-desc::after { content: '↓'; color: #3b82f6; font-weight: bold; }
+        th { cursor: pointer; user-select: none; transition: background 0.2s; white-space: nowrap; }
+        th:hover { background-color: #e2e8f0; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #f1f5f9; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3b82f6; border-radius: 50%; width: 36px; height: 36px; animation: spin 0.8s linear infinite; display: inline-block; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .mini-chart { width: 100%; height: 230px; }
+        .macro-btn { transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+        .macro-btn.active { background: linear-gradient(135deg, #2563eb, #1d4ed8); color: white; border-color: transparent; box-shadow: 0 2px 5px rgba(37, 99, 235, 0.35); }
+        .rank-sort-btn { font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid #e2e8f0; cursor: pointer; transition: all 0.2s; color: #64748b; background: white;}
+        .rank-sort-btn:hover { background: #f8fafc; border-color: #cbd5e1; }
+        .rank-sort-btn.active { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; font-weight: bold; }
+        .ach-mode-btn { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid #e2e8f0; cursor: pointer; transition: all 0.2s; color: #64748b; background: white; }
+        .ach-mode-btn.active { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; font-weight: bold; }
+        .chip-disabled { opacity: 0.4; cursor: not-allowed !important; background-color: #f1f5f9 !important; color: #94a3b8 !important; border-color: #e2e8f0 !important; text-decoration: line-through; }
+    </style>
+</head>
+<body class="bg-slate-100 flex h-screen w-screen overflow-hidden font-sans text-slate-800">
+
+    <!-- ================= 左侧功能与筛选工作台 (Sidebar) ================= -->
+    <aside class="w-72 xl:w-80 bg-white border-r border-slate-200 flex flex-col h-full shrink-0 shadow-sm z-20 select-none">
+        <div class="p-3.5 border-b border-slate-200 flex items-center gap-3 shrink-0">
+            <div class="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center shadow-md shadow-blue-500/30 text-white font-bold text-lg shrink-0">G</div>
+            <div class="overflow-hidden">
+                <h1 class="text-sm font-bold text-slate-800 tracking-wide truncate">客户成长管理系统</h1>
+                <div class="flex items-center gap-1.5 mt-0.5">
+                    <div id="dbIndicator" class="w-2 h-2 rounded-full bg-slate-300 shrink-0"></div>
+                    <span id="dbStatusText" class="text-[11px] text-slate-500 truncate">等待数据就绪...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 逻辑冲突预警提示条 -->
+        <div id="conflictAlert" class="hidden mx-3 mt-3 p-2.5 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-800 shadow-sm shrink-0">
+            <div class="font-bold flex items-center justify-between">
+                <span>⚠️ 筛选条件前后逻辑互斥</span>
+                <button onclick="window.resetAllFilters()" class="bg-amber-600 text-white px-2 py-0.5 rounded text-[10px] hover:bg-amber-700 font-bold">重新恢复选择</button>
+            </div>
+            <p class="text-[11px] text-amber-700 mt-1 leading-tight" id="conflictMsg">当前筛选存在无数据交集，互斥选项已自动锁死，请点击恢复重新选择。</p>
+        </div>
+
+        <div class="flex-1 overflow-y-auto custom-scroll p-3.5 space-y-4">
+            
+            <!-- 1. 业务体系切换 -->
+            <div id="macroContainer" style="display: none;">
+                <label class="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">业务体系切换</label>
+                <div class="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                    <button class="macro-btn active py-1.5 rounded-lg text-xs font-bold text-slate-600" data-macro="GASN">核心体系</button>
+                    <button class="macro-btn py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:bg-white" data-macro="GRC">零售俱乐部</button>
+                    <button class="macro-btn py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:bg-white" data-macro="ALL">全局展示</button>
+                </div>
+            </div>
+
+            <!-- 2. 精准搜索 -->
+            <div>
+                <div class="flex justify-between items-center mb-1">
+                    <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">精准查找门店 / 销售</label>
+                    <span id="searchClearBtn" class="text-[10px] text-blue-600 cursor-pointer hover:underline hidden" onclick="window.clearSearchInput()">清空</span>
+                </div>
+                <div class="relative">
+                    <input type="text" id="searchInput" placeholder="输入门店编码、名称或销售姓名..." class="border border-slate-300 pl-7 pr-3 py-1.5 rounded-lg w-full text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all bg-slate-50 focus:bg-white">
+                    <svg class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                </div>
+            </div>
+
+            <!-- 3. 选取查看年份 + 仅统计所选年度的 New / Refurbish 复选框 -->
+            <div class="bg-blue-50/90 rounded-xl p-3 border border-blue-200 shadow-sm space-y-2">
+                <div class="flex justify-between items-center">
+                    <label class="block text-[11px] font-bold text-blue-800 uppercase tracking-wider">📅 选取查看年份</label>
+                    <span class="text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded font-bold">直接选年份</span>
+                </div>
+                <select id="yearSelect" class="bg-white border border-blue-300 rounded-lg p-2 w-full text-xs font-bold text-blue-900 outline-none cursor-pointer shadow-inner">
+                    <option value="2026">2026年 (最新)</option>
+                </select>
+
+                <label class="flex items-start gap-1.5 pt-1.5 border-t border-blue-200/60 text-[11px] text-blue-800 cursor-pointer font-medium leading-tight">
+                    <input type="checkbox" id="onlyCurrentYearSignCheck" class="mt-0.5 w-3.5 h-3.5 accent-blue-600 rounded cursor-pointer shrink-0">
+                    <div>
+                        <span class="font-bold">仅统计所选年度的 New / Refurbish</span>
+                        <p class="text-[10px] text-slate-500 font-normal mt-0.5">勾选：右侧建店榜与大盘仅显示所选当年数据；未勾选：建店榜显示有记录以来累计数。</p>
+                    </div>
+                </label>
+            </div>
+
+            <!-- 4. 区域三级联动 -->
+            <div class="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+                <label class="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">区域范围筛选 (给区域销售导出)</label>
+                <div>
+                    <span class="text-[10px] text-slate-500 block mb-0.5">标准大区</span>
+                    <select id="regionSelect" class="border border-slate-300 p-1.5 rounded-lg w-full text-xs outline-none bg-white font-medium">
+                        <option value="">全部大区</option><option value="East">East (东区)</option><option value="South">South (南区)</option><option value="North">North (北区)</option><option value="Central">Central (中区)</option>
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <span class="text-[10px] text-slate-500 block mb-0.5">省份</span>
+                        <select id="provinceSelect" class="border border-slate-300 p-1.5 rounded-lg w-full text-xs outline-none bg-white"><option value="">全部</option></select>
+                    </div>
+                    <div>
+                        <span class="text-[10px] text-slate-500 block mb-0.5">城市</span>
+                        <select id="citySelect" class="border border-slate-300 p-1.5 rounded-lg w-full text-xs outline-none bg-white"><option value="">全部</option></select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. 多维属性标签筛选 (已消除 GRC 零售俱乐部重复项) -->
+            <div class="space-y-3" id="dynamicChipsContainer">
+                <div>
+                    <span class="text-[11px] font-bold text-slate-500 block mb-1 uppercase">合同状态 <span class="text-[10px] font-normal text-slate-400">(无匹配项锁死)</span></span>
+                    <div class="flex flex-wrap gap-1.5" id="filter-contractStatus"></div>
+                </div>
+                <div>
+                    <span class="text-[11px] font-bold text-slate-500 block mb-1 uppercase">建店类别 <span class="text-[10px] font-normal text-slate-400">(含存续老店)</span></span>
+                    <div class="flex flex-wrap gap-1.5" id="filter-actType"></div>
+                </div>
+                <div id="storeLevelFilterBlock">
+                    <span class="text-[11px] font-bold text-slate-500 block mb-1 uppercase">核心门店级别细分 (FS+/FS/SC/EXP/EX)</span>
+                    <div class="flex flex-wrap gap-1.5" id="filter-storeLevel"></div>
+                </div>
+                <div>
+                    <span class="text-[11px] font-bold text-slate-500 block mb-1 uppercase">所选年客户代码 (Z01/Z02)</span>
+                    <div class="flex flex-wrap gap-1.5" id="filter-zType"></div>
+                </div>
+
+                <div class="p-2.5 bg-slate-50/90 rounded-xl border border-slate-200 space-y-2.5">
+                    <div>
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-[11px] font-bold text-blue-700 flex items-center gap-1">
+                                <span class="w-2 h-2 rounded-full bg-blue-600"></span> 当年达成率区间 (可复选)
+                            </span>
+                            <span class="text-[10px] text-slate-400">自然年口径</span>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5" id="filter-achievement"></div>
+                    </div>
+                    <div class="pt-2 border-t border-slate-200/80">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-[11px] font-bold text-violet-700 flex items-center gap-1">
+                                <span class="w-2 h-2 rounded-full bg-violet-600"></span> 合约期内达成率区间 (可复选)
+                            </span>
+                            <span class="text-[10px] text-violet-500 font-medium">⚡含次月起算</span>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5" id="filter-contractAchievement"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. 图表联动下钻状态 -->
+            <div class="pt-2 border-t border-slate-200">
+                <div class="flex flex-wrap items-center gap-1.5" id="drillFilters"></div>
+            </div>
+        </div>
+
+        <!-- 底部功能操作台 -->
+        <div class="p-3.5 border-t border-slate-200 bg-slate-50 space-y-2 shrink-0">
+            <div class="grid grid-cols-2 gap-2">
+                <button id="resetBtn" class="bg-white text-slate-700 py-2 px-3 border border-slate-300 rounded-xl hover:bg-slate-100 text-xs font-bold transition-all flex items-center justify-center gap-1 shadow-sm">
+                    🔄 恢复默认
+                </button>
+                <button id="exportBtn" class="bg-emerald-600 text-white py-2 px-3 rounded-xl hover:bg-emerald-700 shadow-md shadow-emerald-500/20 text-xs font-bold transition-all flex items-center justify-center gap-1">
+                    📥 导出门店数据
+                </button>
+            </div>
+
+            <!-- 隐藏管理员面板 (Ctrl + I 呼出) -->
+            <div id="adminControls" class="pt-2 border-t border-slate-200 flex flex-col gap-1.5" style="display: none;">
+                <div class="flex justify-between items-center">
+                    <span class="text-[10px] font-bold text-slate-400 uppercase">管理员数据工具</span>
+                    <button id="clearDataBtn" class="text-[11px] text-red-600 hover:underline font-bold">⚠️ 1. 先点此清除旧缓存</button>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <label for="fileUpload" class="bg-slate-700 text-white py-1.5 px-2 rounded-lg cursor-pointer hover:bg-slate-800 transition-all font-medium text-[11px] text-center">
+                        2. 重新载入数据
+                    </label>
+                    <input type="file" id="fileUpload" accept=".xlsx, .xls, .csv" class="hidden" multiple onclick="this.value=null">
+                    <button id="packBtn" class="bg-blue-600 text-white py-1.5 px-2 rounded-lg hover:bg-blue-700 transition-all font-medium text-[11px] text-center shadow">
+                        3. 📦 打包分发版
+                    </button>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ================= 右侧自适应主看板与明细展示区 ================= -->
+    <main class="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden custom-scroll p-4 xl:p-5 relative">
+        
+        <div id="initMessage" class="flex flex-col items-center justify-center h-full text-slate-500">
+            <div id="initIcon" class="w-24 h-24 bg-white rounded-full flex items-center justify-center text-5xl shadow-sm mb-6 border border-slate-100 transition-all">📊</div>
+            <h3 id="initTitle" class="text-xl font-bold text-slate-700 mb-2">客户成长管理系统 (V56 18+占比精准修复版)</h3>
+            <p id="initSub" class="text-slate-500 text-center max-w-lg mt-2 leading-relaxed">请按 <kbd class="px-2 py-1 bg-slate-200 rounded text-slate-700 font-bold">Ctrl + I</kbd> 调出左下角管理栏，点击【清除旧缓存】后重新上传 2021~2026 Excel 数据表。</p>
+        </div>
+
+        <div id="mainContent" style="display: none;" class="w-full max-w-full space-y-4 pb-10">
+            
+            <!-- 顶部 6 大 KPI 卡片 -->
+            <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden">
+                    <div class="absolute inset-y-0 left-0 w-1 bg-slate-400"></div>
+                    <div class="text-slate-500 text-[11px] font-semibold mb-1 uppercase tracking-wider pl-1 truncate">当前筛选门店数</div>
+                    <div class="text-xl xl:text-2xl font-bold text-slate-800 pl-1" id="kpi-count">0</div>
+                    <div class="text-[10px] text-slate-400 pl-1 mt-0.5 truncate" id="kpi-sub-count">按当年表内身份统计</div>
+                </div>
+                <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden">
+                    <div class="absolute inset-y-0 left-0 w-1 bg-blue-500"></div>
+                    <div class="text-slate-500 text-[11px] font-semibold mb-1 uppercase tracking-wider pl-1 text-blue-600 truncate" id="kpi-title-tpp">当年 TPP 目标</div>
+                    <div class="text-xl xl:text-2xl font-bold text-slate-800 pl-1" id="kpi-tpp">0</div>
+                    <div class="text-[10px] text-slate-400 pl-1 mt-0.5 truncate" id="kpi-sub-tpp" title="1~12月月度TPP累加">月度TPP合计: 0</div>
+                </div>
+                <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden">
+                    <div class="absolute inset-y-0 left-0 w-1 bg-blue-600"></div>
+                    <div class="text-slate-500 text-[11px] font-semibold mb-1 uppercase tracking-wider pl-1 text-blue-600 truncate" id="kpi-title-st">当年 ST 实销</div>
+                    <div class="text-xl xl:text-2xl font-bold text-blue-600 pl-1" id="kpi-st">0</div>
+                    <div class="text-[10px] text-slate-400 pl-1 mt-0.5 truncate" id="kpi-sub-st" title="1~12月月度ST累加">月度ST合计: 0</div>
+                </div>
+                <div class="bg-blue-50 p-3.5 rounded-2xl shadow-sm border border-blue-100 relative overflow-hidden">
+                    <div class="absolute inset-y-0 left-0 w-1 bg-emerald-500"></div>
+                    <div class="text-blue-600 text-[11px] font-bold mb-1 uppercase tracking-wider pl-1 truncate" id="kpi-title-rate">当年整体达成率</div>
+                    <div class="text-xl xl:text-2xl font-black text-blue-700 pl-1" id="kpi-contract-rate">0%</div>
+                    <div class="text-[10px] text-blue-600/80 pl-1 mt-0.5 truncate" id="kpi-sub-rate">ST ÷ 当年TPP</div>
+                </div>
+                <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden">
+                    <div class="absolute inset-y-0 left-0 w-1 bg-purple-500"></div>
+                    <div class="text-slate-500 text-[11px] font-semibold mb-1 uppercase tracking-wider pl-1 truncate">18寸及以上占比</div>
+                    <div class="text-xl xl:text-2xl font-bold text-purple-600 pl-1" id="kpi-18plus">0%</div>
+                    <div class="text-[10px] text-purple-600/80 pl-1 mt-0.5 truncate" id="kpi-sub-18">18+总量: 0 条</div>
+                </div>
+                <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden">
+                    <div class="absolute inset-y-0 left-0 w-1 bg-amber-500"></div>
+                    <div class="text-slate-500 text-[11px] font-semibold mb-1 uppercase tracking-wider pl-1 truncate">延保(SO)率</div>
+                    <div class="text-xl xl:text-2xl font-bold text-amber-500 pl-1" id="kpi-so-rate">0%</div>
+                    <div class="text-[10px] text-amber-600/80 pl-1 mt-0.5 truncate" id="kpi-sub-so">SO总量: 0 条</div>
+                </div>
+            </div>
+
+            <!-- 全景月度趋势图 + 1~12月精确数字核对表 -->
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col gap-2">
+                <div id="chartGlobalMonthly" class="w-full h-[270px]"></div>
+                <div class="overflow-x-auto custom-scroll border-t border-slate-100 pt-2">
+                    <table class="w-full text-[11px] text-center border-collapse whitespace-nowrap" id="globalMonthVerifyTable"></table>
+                </div>
+            </div>
+
+            <!-- 多维交互图表矩阵 -->
+            <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                <div class="lg:col-span-2 bg-white p-4 rounded-2xl shadow-sm border border-slate-200 h-[480px] relative" id="chartMap"></div>
+                
+                <!-- 销售建店排行榜（顶部四维分类汇总卡片 + 有记录以来累计 / 仅限当年双模式自动切换） -->
+                <div class="lg:col-span-2 bg-white p-4 rounded-2xl shadow-sm border border-slate-200 h-[480px] relative flex flex-col">
+                    <div class="flex flex-wrap justify-between items-center gap-1 pb-2 border-b border-slate-100 shrink-0">
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-[13px] font-bold text-[#334155]" id="rankChartTitle">点击姓名钻取: 销售开店榜</span>
+                            <span id="rankModeBadge" class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">有记录以来累计</span>
+                        </div>
+                        <div class="flex items-center gap-1 bg-white">
+                            <button id="toggleRetainedRankBtn" class="text-[10px] px-2 py-0.5 rounded border border-slate-300 text-slate-600 hover:bg-slate-50 transition font-medium" title="切换是否将存续老店(Retained)画入下方柱状图">柱图含存续: 关</button>
+                            <button class="rank-sort-btn active" data-sort="total">总量 ▼</button>
+                            <button class="rank-sort-btn" data-sort="new">新建 ▼</button>
+                            <button class="rank-sort-btn" data-sort="refur">翻改 ▼</button>
+                        </div>
+                    </div>
+
+                    <!-- 每个类别的独立统计汇总卡片栏 -->
+                    <div class="grid grid-cols-4 gap-2 my-2 shrink-0">
+                        <div class="bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200 flex flex-col justify-between">
+                            <span class="text-[10px] font-bold text-slate-500">📊 建店(New+翻改)合计</span>
+                            <div class="flex items-baseline justify-between mt-0.5">
+                                <span id="rank-sum-total" class="text-sm xl:text-base font-black text-slate-800">0</span>
+                                <span class="text-[10px] text-slate-400">上榜 <b id="rank-sum-asm" class="text-slate-600">0</b> 人</span>
+                            </div>
+                        </div>
+                        <div class="bg-emerald-50/70 px-2.5 py-1.5 rounded-xl border border-emerald-200 flex flex-col justify-between">
+                            <span class="text-[10px] font-bold text-emerald-700">🟢 New (新建) 汇总</span>
+                            <div class="flex items-baseline justify-between mt-0.5">
+                                <span id="rank-sum-new" class="text-sm xl:text-base font-black text-emerald-700">0</span>
+                                <span class="text-[10px] text-emerald-600">家店</span>
+                            </div>
+                        </div>
+                        <div class="bg-blue-50/70 px-2.5 py-1.5 rounded-xl border border-blue-200 flex flex-col justify-between">
+                            <span class="text-[10px] font-bold text-blue-700">🔵 Refurbish (翻改) 汇总</span>
+                            <div class="flex items-baseline justify-between mt-0.5">
+                                <span id="rank-sum-refur" class="text-sm xl:text-base font-black text-blue-700">0</span>
+                                <span class="text-[10px] text-blue-600">家店</span>
+                            </div>
+                        </div>
+                        <div class="bg-slate-100/80 px-2.5 py-1.5 rounded-xl border border-slate-300/80 flex flex-col justify-between">
+                            <span class="text-[10px] font-bold text-slate-600">⚪ Retained (存续) 汇总</span>
+                            <div class="flex items-baseline justify-between mt-0.5">
+                                <span id="rank-sum-ret" class="text-sm xl:text-base font-black text-slate-700">0</span>
+                                <span class="text-[10px] text-slate-500" id="rank-ret-status-tag">未计入柱图</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="chartRanking" class="w-full flex-1 min-h-0"></div>
+                </div>
+                
+                <div class="lg:col-span-2 bg-white p-4 rounded-2xl shadow-sm border border-slate-200 h-[270px]" id="chartActTypePerf"></div>
+                <div class="lg:col-span-2 bg-white p-4 rounded-2xl shadow-sm border border-slate-200 h-[270px]" id="chartRegionPerf"></div>
+
+                <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200 h-[240px]" id="chartType"></div>
+                <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200 h-[240px]" id="chartTier"></div>
+                <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200 h-[240px]" id="chartExpiry"></div>
+                <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200 h-[240px] relative flex flex-col">
+                    <div class="flex justify-between items-center z-10 px-1">
+                        <span class="text-[12px] font-bold text-slate-600" id="achChartTitle">达成率分布</span>
+                        <div class="flex gap-1">
+                            <button class="ach-mode-btn active" data-mode="year">按当年</button>
+                            <button class="ach-mode-btn" data-mode="contract">按合约期</button>
+                        </div>
+                    </div>
+                    <div id="chartAchieve" class="w-full flex-1"></div>
+                </div>
+            </div>
+
+            <!-- 底部门店数据明细表 -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="p-3 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2 text-xs">
+                    <div class="font-bold text-slate-700 flex items-center gap-2">
+                        <span>📋 门店业绩追踪明细表（点击任意行展开高清双进度条状图、月度 TPP/ST/SO 明细与历年快照）</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3 text-[11px] font-bold">
+                        <span class="flex items-center gap-1.5 text-blue-700 bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200">
+                            <span class="w-2 h-2 rounded-full bg-blue-600"></span> 蓝色列：当年自然年完整 TPP / ST (与 Excel 原表 100% 一致)
+                        </span>
+                        <span class="flex items-center gap-1.5 text-violet-700 bg-violet-50 px-2.5 py-1 rounded-md border border-violet-200">
+                            <span class="w-2 h-2 rounded-full bg-violet-600"></span> 紫色列 ⚡次月起：GASN核心客户合约期内从签约次月起算考核
+                        </span>
+                    </div>
+                </div>
+                <div class="w-full overflow-x-auto custom-scroll">
+                    <table class="w-full text-left text-xs whitespace-nowrap">
+                        <thead class="bg-slate-50 text-slate-600 border-b border-slate-200">
+                            <tr id="tableHeaders">
+                                <th class="px-2 py-2.5 font-semibold sort-icon" data-sort="id">编码</th>
+                                <th class="px-2 py-2.5 font-semibold sort-icon" data-sort="name">门店名称</th>
+                                <th class="px-1.5 py-2.5 font-semibold sort-icon" data-sort="asm">销售</th>
+                                <th class="px-2 py-2.5 font-semibold sort-icon" data-sort="type">店类型 / Z代码</th>
+                                <th class="px-2 py-2.5 font-semibold sort-icon" data-sort="region">区域/省市</th>
+                                <th class="px-1.5 py-2.5 font-semibold sort-icon text-center" data-sort="remainMonths">剩余月</th>
+                                <th class="px-2 py-2.5 font-semibold sort-icon text-right text-indigo-700" data-sort="monthlySignTpp" title="月度签约目标量">月签约</th>
+                                <th class="px-2 py-2.5 font-semibold sort-icon text-right text-blue-600" data-sort="tpp" id="th-tpp">当年TPP</th>
+                                <th class="px-2 py-2.5 font-semibold sort-icon text-right text-blue-600" data-sort="st" id="th-st">当年ST</th>
+                                <th class="px-2 py-2.5 font-semibold sort-icon text-right bg-blue-50/50" data-sort="achievement" id="th-ach">当年达成%</th>
+                                <th class="px-1.5 py-2.5 font-semibold sort-icon text-right text-amber-600" data-sort="so">延保(SO)</th>
+                                <th class="px-2 py-2.5 font-semibold sort-icon text-right text-violet-700 bg-violet-50/30" data-sort="contractTpp">考核总目标</th>
+                                <th class="px-2 py-2.5 font-semibold sort-icon text-right text-violet-700 bg-violet-50/30" data-sort="contractSt">累计完成ST</th>
+                                <th class="px-2.5 py-2.5 font-semibold sort-icon text-left text-violet-800 bg-violet-50/60" data-sort="contractAchieve">合约完成度 vs 任务完成度 (双条状图)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+                <div id="tableStatus" class="p-3 bg-slate-50 text-center text-xs text-slate-500 border-t border-slate-200"></div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // ==========================================
+        // 1. 全局工具函数与全兼容级别识别器
+        // ==========================================
+        function parseDateSafe(val) {
+            if (val === null || val === undefined || val === '') return '-';
+            try {
+                if (val instanceof Date) {
+                    if(isNaN(val.getTime())) return '-';
+                    return new Date(val.getTime() - val.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+                }
+                let numVal = Number(val);
+                if (!isNaN(numVal) && numVal > 30000 && numVal < 60000) {
+                    return new Date(Math.round((numVal - 25569) * 86400 * 1000)).toISOString().split('T')[0];
+                }
+                if (typeof val === 'string') {
+                    let strVal = val.trim();
+                    if (strVal.match(/^[a-zA-Z]{3}\s[a-zA-Z]{3}\s\d{2}/)) {
+                        let pd = new Date(strVal);
+                        if(!isNaN(pd.getTime())) return new Date(pd.getTime() - pd.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+                    }
+                    let datePart = strVal.split(' ')[0].split('T')[0];
+                    if(datePart.includes('-') || datePart.includes('/')) return datePart.replace(/\//g, '-');
+                }
+            } catch(e) {}
+            return '-';
+        }
+
+        function toNumSafe(val) {
+            if (val === null || val === undefined || val === '') return NaN;
+            if (typeof val === 'number') return isNaN(val) ? NaN : val;
+            let s = String(val).replace(/,/g, '').trim();
+            if (s === '' || s === '-') return NaN;
+            let n = Number(s);
+            return isNaN(n) ? NaN : n;
+        }
+
+        function normalizeStoreType(rawVal) {
+            if (rawVal === null || rawVal === undefined || rawVal === '' || rawVal === '-' || rawVal === 'undefined') return '-';
+            let s = String(rawVal).trim();
+            let up = s.toUpperCase();
+            if (up.includes('FS+') || up.includes('驾享') || up.includes('旗舰')) return 'FS+ 驾享旗舰店';
+            if (/(^|[^A-Z])FS([^A-Z\+]|$)/.test(up) || up.includes('驾悦')) return 'FS 驾悦中心';
+            if (/(^|[^A-Z])SC([^A-Z]|$)/.test(up) || up.includes('驾乘')) return 'SC 驾乘中心';
+            if (/(^|[^A-Z])EXP([^A-Z]|$)/.test(up) || up.includes('驾途')) return 'EXP 驾途店';
+            if (/(^|[^A-Z])EX([^A-Z]|$)/.test(up) || up.includes('驾速')) return 'EX 驾速店';
+            if (/(^|[^A-Z])GRC([^A-Z]|$)/.test(up) || up.includes('零售俱乐部') || up.includes('俱乐部')) return 'GRC 零售俱乐部';
+            return s;
+        }
+
+        function normalizeActType(rawAct) {
+            if (!rawAct || rawAct === '-' || rawAct === 'undefined') return 'Retained';
+            let aStr = String(rawAct).trim().toUpperCase();
+            if (aStr === 'NEW' || (aStr.includes('NEW') && !aStr.includes('RENEW')) || aStr.includes('新建')) return 'New';
+            if (aStr === 'REFURBISH' || aStr.includes('UPGRADE') || aStr.includes('REFURBISH') || aStr.includes('升级') || aStr.includes('翻新') || aStr.includes('翻牌') || aStr.includes('RENEW') || aStr.includes('续签') || aStr.includes('续约')) return 'Refurbish';
+            return 'Retained';
+        }
+
+        const REGION_PROV_MAP = {
+            'Central': ['重庆市', '四川省', '河南省', '湖北省', '陕西省', '湖南省', '江西省'],
+            'North': ['北京市', '河北省', '天津市', '辽宁省', '黑龙江省', '吉林省', '内蒙古自治区', '山西省', '新疆维吾尔自治区', '宁夏回族自治区', '甘肃省', '青海省'],
+            'East': ['上海市', '江苏省', '浙江省', '安徽省', '山东省'],
+            'South': ['广东省', '福建省', '广西壮族自治区', '海南省', '云南省', '贵州省', '西藏自治区']
+        };
+
+        const PROV_SHORT_TO_LONG = {
+            '北京':'北京市','天津':'天津市','上海':'上海市','重庆':'重庆市',
+            '河北':'河北省','山西':'山西省','辽宁':'辽宁省','吉林':'吉林省','黑龙江':'黑龙江省',
+            '江苏':'江苏省','浙江':'浙江省','安徽':'安徽省','福建':'福建省','江西':'江西省','山东':'山东省',
+            '河南':'河南省','湖北':'湖北省','湖南':'湖南省','广东':'广东省','海南':'海南省',
+            '四川':'四川省','贵州':'贵州省','云南':'云南省','陕西':'陕西省','甘肃':'甘肃省','青海':'青海省',
+            '内蒙古':'内蒙古自治区','广西':'广西壮族自治区','西藏':'西藏自治区','宁夏':'宁夏回族自治区','新疆':'新疆维吾尔自治区',
+            '香港':'香港特别行政区','澳门':'澳门特别行政区','台湾':'台湾省'
+        };
+
+        function getRegionFromProv(p) {
+            for (const [reg, provs] of Object.entries(REGION_PROV_MAP)) {
+                if (provs.includes(p)) return reg;
+            }
+            return 'Unknown';
+        }
+
+        function getMapName(prov) {
+            if (!prov) return '';
+            return prov.replace(/维吾尔自治区|回族自治区|壮族自治区|自治区|特别行政区|省|市/g, '');
+        }
+
+        const getEl = (id) => document.getElementById(id);
+        const getEls = (selector) => document.querySelectorAll(selector);
+
+        // ==========================================
+        // 2. 状态机制与核心门店严格判定函数
+        // ==========================================
+        /*--INJECT_TARGET_START--*/
+        window.INJECTED_GASN_DATA = null;
+        /*--INJECT_TARGET_END--*/
+
+        let globalStoreMap = {}; 
+        let storeData = [];
+        let filteredData = [];
+        let sortState = { column: null, order: 'desc' };
+        let rankSortConfig = { type: 'total', order: 'desc' }; 
+        let includeRetainedInRank = false;
+        let achChartMode = 'year'; 
+        let charts = { map: null, ranking: null, type: null, tier: null, expiry: null, achieve: null, globalMonthly: null, actTypePerf: null, regionPerf: null };
+        let miniCharts = {}; 
+        let maxYearFound = 2026;
+        let activeMacro = 'GASN'; 
+        let searchDebounceTimer = null;
+
+        const activeFilters = { 
+            levels: new Set(), 
+            zTypes: new Set(), 
+            achievements: new Set(), 
+            contractAchievements: new Set(), 
+            actTypes: new Set(), 
+            tiers: new Set(), 
+            contractStatus: new Set(), 
+            expiry: null, 
+            asm: null 
+        };
+
+        function checkIsGasnStore(typeStr) {
+            if (!typeStr || typeStr === '-') return false;
+            const norm = normalizeStoreType(typeStr);
+            return ['FS+ 驾享旗舰店', 'FS 驾悦中心', 'SC 驾乘中心', 'EXP 驾途店', 'EX 驾速店'].includes(norm);
+        }
+
+        function checkIsGrcStore(typeStr) {
+            if (!typeStr || typeStr === '-') return false;
+            const norm = normalizeStoreType(typeStr);
+            return norm === 'GRC 零售俱乐部';
+        }
+
+        function getStoreYearProfile(d, targetYear) {
+            const h = (d.history && d.history[targetYear]) ? d.history[targetYear] : null;
+            let rawType = (h && h.type && h.type !== '-') ? h.type : (targetYear <= 2022 ? (d.earliestKnownType || d.type || '-') : (h && h.type !== undefined ? h.type : (d.type || '-')));
+            const yType = normalizeStoreType(rawType);
+            const yZType = (h && h.zType && h.zType !== '-') ? h.zType : (d.zType || '-');
+            const yAsm = (h && h.asm && h.asm !== '-') ? h.asm : (d.asm || '-');
+            const rawAct = (h && h.actType !== undefined) ? h.actType : (d.actType || '-');
+            const yAct = normalizeActType(rawAct);
+            const ySignDate = (h && h.signDate && h.signDate !== '-') ? h.signDate : (d.signDate || '-');
+            const yExpireDate = (h && h.expireDate && h.expireDate !== '-') ? h.expireDate : (d.expireDate || '-');
+            const ySignYear = (h && h.signYear) ? h.signYear : (d.signYear || 0);
+            const yRowCount = (h && h.rowCount) ? h.rowCount : 1;
+
+            let rMonths = d.remainMonths;
+            if (yExpireDate !== '-') {
+                const exp = new Date(yExpireDate);
+                const refDate = (targetYear < maxYearFound) ? new Date(targetYear, 11, 31) : new Date();
+                if (!isNaN(exp.getTime())) {
+                    rMonths = (exp.getFullYear() - refDate.getFullYear()) * 12 + (exp.getMonth() - refDate.getMonth());
+                }
+            } else {
+                rMonths = -1;
+            }
+
+            return {
+                type: yType,
+                zType: yZType,
+                asm: yAsm,
+                actType: yAct,
+                signDate: ySignDate,
+                expireDate: yExpireDate,
+                signYear: ySignYear,
+                remainMonths: rMonths,
+                rowCount: yRowCount,
+                isGasn: checkIsGasnStore(yType),
+                isGrc: checkIsGrcStore(yType)
+            };
+        }
+
+        function getStoreAllTimeProfile(d) {
+            const yrs = Object.keys(d.history || {}).map(Number).filter(y => !isNaN(y)).sort((a,b)=>b-a);
+            let bestType = d.type || '-';
+            let bestZ = d.zType || '-';
+            let bestAsm = d.asm || '-';
+            let bestAct = 'Retained';
+
+            for (let y of yrs) {
+                const h = d.history[y];
+                if (!h) continue;
+                let normT = normalizeStoreType(h.type);
+                if (checkIsGasnStore(normT) && !checkIsGasnStore(bestType)) bestType = normT;
+                else if (bestType === '-' && normT !== '-') bestType = normT;
+
+                if ((bestZ === '-' || !bestZ) && h.zType && h.zType !== '-') bestZ = h.zType;
+                if ((bestAsm === '-' || !bestAsm) && h.asm && h.asm !== '-') bestAsm = h.asm;
+
+                let normA = normalizeActType(h.actType);
+                if (normA === 'Refurbish') bestAct = 'Refurbish';
+                else if (normA === 'New' && bestAct === 'Retained') bestAct = 'New';
+            }
+            if (bestAct === 'Retained') bestAct = normalizeActType(d.actType);
+
+            return {
+                type: normalizeStoreType(bestType),
+                zType: bestZ,
+                asm: bestAsm,
+                actType: bestAct,
+                isGasn: checkIsGasnStore(bestType),
+                isGrc: checkIsGrcStore(bestType)
+            };
+        }
+
+        // ==========================================
+        // 3. 主干执行流与全部事件绑定
+        // ==========================================
+        document.addEventListener('DOMContentLoaded', async () => {
+            
+            const activeBtn = document.querySelector('.macro-btn.active');
+            if (activeBtn) activeMacro = activeBtn.getAttribute('data-macro');
+
+            document.addEventListener('keydown', function(e) {
+                if (e.ctrlKey && e.key.toLowerCase() === 'i') {
+                    e.preventDefault();
+                    const adminPanel = getEl('adminControls');
+                    if(adminPanel) adminPanel.style.display = adminPanel.style.display === 'none' ? 'flex' : 'none';
+                }
+            });
+
+            const clearBtn = getEl('clearDataBtn');
+            if(clearBtn) {
+                clearBtn.addEventListener('click', async () => {
+                    if(confirm('此操作将清空旧版缓存数据！清除后请重新载入 Excel 文件，确认继续？')) {
+                        await localforage.clear();
+                        location.reload();
+                    }
+                });
+            }
+
+            const packBtn = getEl('packBtn');
+            if(packBtn) {
+                packBtn.addEventListener('click', () => {
+                    if (Object.keys(globalStoreMap).length === 0) { alert('请先载入数据！'); return; }
+                    let html = document.documentElement.innerHTML;
+                    
+                    const dataStr = encodeURIComponent(JSON.stringify(globalStoreMap));
+                    const injectString = `window.INJECTED_GASN_DATA = JSON.parse(decodeURIComponent("${dataStr}"));`;
+                    
+                    html = html.replace(/\/\*--INJECT_TARGET_START--\*\/[\s\S]*?\/\*--INJECT_TARGET_END--\*\//, () => injectString);
+                    html = html.replace(/<div id="adminControls"[\s\S]*?<\/div>\s*<\/div>/, '</div>');
+                    
+                    const finalHtml = `<!DOCTYPE html>\n<html lang="zh-CN">\n${html}\n</html>`;
+                    const blob = new Blob([finalHtml], {type: 'text/html;charset=utf-8'});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = '客户成长管理系统.html';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                });
+            }
+
+            // 切换销售榜单柱状图是否画入存续老店(Retained)
+            const toggleRetainedBtn = getEl('toggleRetainedRankBtn');
+            if (toggleRetainedBtn) {
+                toggleRetainedBtn.addEventListener('click', () => {
+                    includeRetainedInRank = !includeRetainedInRank;
+                    if (includeRetainedInRank) {
+                        toggleRetainedBtn.innerText = '柱图含存续: 开';
+                        toggleRetainedBtn.className = 'text-[10px] px-2 py-0.5 rounded border border-blue-300 bg-blue-50 text-blue-700 font-bold transition';
+                    } else {
+                        toggleRetainedBtn.innerText = '柱图含存续: 关';
+                        toggleRetainedBtn.className = 'text-[10px] px-2 py-0.5 rounded border border-slate-300 text-slate-600 hover:bg-slate-50 transition font-medium';
+                    }
+                    const yrSel = getEl('yearSelect');
+                    if (yrSel) updateDashboards(parseInt(yrSel.value) || maxYearFound);
+                });
+            }
+
+            // 单店展开详情
+            window.toggleRow = function(cleanDomId) {
+                const el = getEl('hist-' + cleanDomId);
+                if(!el) return;
+                const isHidden = el.classList.contains('hidden');
+                
+                getEls('.hist-row').forEach(row => row.classList.add('hidden'));
+                
+                if (isHidden) {
+                    el.classList.remove('hidden');
+                    const targetYear = parseInt(getEl('yearSelect') ? getEl('yearSelect').value : maxYearFound) || maxYearFound;
+                    const d = filteredData.find(item => String(item.id).replace(/[^a-zA-Z0-9]/g, '_') === cleanDomId) || storeData.find(item => String(item.id).replace(/[^a-zA-Z0-9]/g, '_') === cleanDomId);
+                    if (!d) return;
+
+                    const getH = (year, hist) => {
+                        let r = hist[year]; if(!r) return { tpp: '-', st: '-', ach: '-', so: '-', soRate: '-', type: '-' };
+                        let soVal = r.so || 0;
+                        let stVal = r.st || 0;
+                        return { 
+                            tpp: (r.tpp || 0).toLocaleString(), 
+                            st: stVal.toLocaleString(), 
+                            ach: r.tpp > 0 ? (stVal / r.tpp * 100).toFixed(1) + '%' : (r.tpp===0 && stVal>0 ? '100%' : '0%'),
+                            so: soVal > 0 ? soVal.toLocaleString() : '0',
+                            soRate: stVal > 0 ? (soVal / stVal * 100).toFixed(1) + '%' : '0%',
+                            type: normalizeStoreType(r.type && r.type !== '-' ? r.type : (d.earliestKnownType || d.type || '-'))
+                        };
+                    };
+                    let h21 = getH(2021, d.history), h22 = getH(2022, d.history), h23 = getH(2023, d.history);
+                    let h24 = getH(2024, d.history), h25 = getH(2025, d.history), h26 = getH(2026, d.history);
+
+                    let rmDisp = `<span class="${d.remainMonths < 0 ? 'text-red-500 font-bold' : (d.remainMonths <= 6 ? 'text-amber-500 font-bold' : 'text-emerald-600 font-bold')}">${d.remainMonths < 0 ? '已过期' : d.remainMonths + '个月'}</span>`;
+                    if(d.signDate === '-') rmDisp = '-';
+
+                    let zDesc = d.zType || '未标注';
+                    let zBadgeColor = 'bg-slate-100 text-slate-700 border-slate-300';
+                    if (String(d.zType).toUpperCase().includes('Z01')) {
+                        zDesc = `${d.zType} (直接签约客户)`;
+                        zBadgeColor = 'bg-indigo-100 text-indigo-800 border-indigo-300';
+                    } else if (String(d.zType).toUpperCase().includes('Z02')) {
+                        zDesc = `${d.zType} (空白市场客户)`;
+                        zBadgeColor = 'bg-amber-100 text-amber-800 border-amber-300';
+                    } else if (String(d.zType).toUpperCase().includes('Z00')) {
+                        zDesc = `${d.zType} (综合渠道客户)`;
+                        zBadgeColor = 'bg-purple-100 text-purple-800 border-purple-300';
+                    }
+
+                    const actLabelMap = { 'New': 'New (新建)', 'Refurbish': 'Refurbish (翻改/续约)', 'Retained': 'Retained (存续履约老店)' };
+                    const actDisplay = actLabelMap[d.actType] || d.actType;
+
+                    const timePctVal = Number((d.timeProgressPct || 0).toFixed(1));
+                    const salesPctVal = Number((d.contractAchieve || 0).toFixed(1));
+                    const timePctWidth = Math.min(100, Math.max(4, timePctVal));
+                    const salesPctWidth = Math.min(100, Math.max(4, salesPctVal));
+                    const salesBarGradient = salesPctVal >= 100 
+                        ? 'from-emerald-500 to-emerald-600' 
+                        : (salesPctVal >= timePctVal ? 'from-violet-500 to-violet-700' : (salesPctVal >= 50 ? 'from-amber-400 to-amber-600' : 'from-red-400 to-red-600'));
+
+                    let gapVal = Math.max(0, d.contractTpp - d.contractSt);
+                    let paceDiff = salesPctVal - timePctVal;
+                    let statusSummary = '';
+                    if (d.contractTpp > 0 && gapVal === 0) {
+                        statusSummary = `<span class="text-emerald-600 font-bold">✅ 任务已100%达成 (超额 ${(d.contractSt - d.contractTpp).toLocaleString()} 条)</span>`;
+                    } else if (d.contractTpp > 0) {
+                        statusSummary = `<span class="${d.isNextMonthRule ? 'text-violet-700' : 'text-red-600'} font-bold">还需进货 ${gapVal.toLocaleString()} 条 (${paceDiff >= 0 ? '⚡超前时间进度 +' + paceDiff.toFixed(1) + '%' : '⚠️滞后时间进度 ' + paceDiff.toFixed(1) + '%'})</span>`;
+                    } else {
+                        statusSummary = `<span class="text-slate-400">当前无约定任务目标</span>`;
+                    }
+
+                    const mTpp = d.history[targetYear]?.monthTpp || Array(12).fill(null);
+                    const mSt = d.history[targetYear]?.monthSt || Array(12).fill(null);
+                    const mSo = d.history[targetYear]?.monthSO || Array(12).fill(null);
+
+                    const isMonthInContract = (mIndex) => {
+                        if (!d.isNextMonthRule) return true;
+                        const mNum = mIndex + 1;
+                        if (targetYear < d.calcStartYear) return false;
+                        if (targetYear === d.calcStartYear && mNum < d.calcStartMonth) return false;
+                        return true;
+                    };
+
+                    el.innerHTML = `
+                        <td colspan="14" class="p-4">
+                            <div class="flex flex-col lg:flex-row gap-5 pl-3 border-l-4 ${d.isNextMonthRule ? 'border-violet-500' : 'border-blue-400'} my-1">
+                                <div class="flex flex-col gap-3 lg:w-[44%]">
+                                    <div class="flex flex-col gap-2.5 text-xs text-slate-700 bg-white p-3.5 rounded-xl shadow-sm border border-slate-200">
+                                        <div class="flex justify-between items-start gap-2">
+                                            <div><span class="text-slate-400">门店档案</span><br><span class="font-bold text-sm text-slate-800">${d.name} (${d.id})</span></div>
+                                            <span class="px-2 py-0.5 rounded text-[11px] font-bold shrink-0 ${d.isNextMonthRule ? 'bg-violet-100 text-violet-700 border border-violet-300' : 'bg-slate-100 text-slate-600'}">${d.calcRuleText}</span>
+                                        </div>
+                                        <div class="grid grid-cols-4 gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200/80">
+                                            <div>
+                                                <span class="text-[10px] text-slate-400 block">${targetYear}年门店级别</span>
+                                                <span class="font-black text-slate-800 text-xs">${d.type}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-[10px] text-slate-400 block">客户属性 / 建店类别</span>
+                                                <span class="inline-block px-1.5 py-0.5 rounded border text-[10px] font-bold ${zBadgeColor}">${zDesc}</span>
+                                                <span class="block text-[10px] font-bold text-slate-600 mt-0.5">${actDisplay}</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-[10px] text-slate-400 block">月度签约量 / 销售</span>
+                                                <span class="font-black text-indigo-700 text-xs">${d.monthlySignTpp > 0 ? d.monthlySignTpp.toLocaleString() + '条/月' : '-'}</span>
+                                                <span class="block text-[10px] text-slate-600 font-bold mt-0.5">销售: ${d.asm}</span>
+                                            </div>
+                                            <div class="bg-amber-50/80 px-2 py-1 rounded border border-amber-200/80">
+                                                <span class="text-[10px] text-amber-700 font-bold block">${targetYear}年 延保(SO) & 18+</span>
+                                                <span class="font-black text-amber-600 text-xs">SO: ${(d.so || 0).toLocaleString()}条 (${(d.soRate || 0).toFixed(1)}%)</span>
+                                                <span class="block text-[10px] text-purple-700 font-bold mt-0.5">18+: ${(d.st18 || 0).toLocaleString()}条 (${(d.st18Rate || 0).toFixed(1)}%)</span>
+                                            </div>
+                                        </div>
+
+                                        <!-- 合约完成度 vs 任务完成度 直观双条状图 -->
+                                        <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3">
+                                            <div>
+                                                <div class="flex justify-between items-center text-xs mb-1">
+                                                    <span class="font-bold text-slate-700">⏱️ 合约完成度 (时间周期进度)</span>
+                                                    <span class="text-[11px] text-slate-500">已履约 <b class="text-blue-700">${d.elapsedContractMonths}/${d.totalContractMonths}</b> 个月 (${d.signDate !== '-' ? d.signDate + '~' + d.expireDate : targetYear + '年'})</span>
+                                                </div>
+                                                <div class="flex items-center gap-2">
+                                                    <div class="flex-1 h-5 bg-slate-200 rounded-md overflow-hidden relative shadow-inner">
+                                                        <div class="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-md flex items-center justify-end pr-2 text-[10px] font-black text-white transition-all duration-300" style="width: ${timePctVal > 0 ? timePctWidth : 0}%">
+                                                            ${timePctVal >= 15 ? timePctVal + '%' : ''}
+                                                        </div>
+                                                    </div>
+                                                    <span class="w-12 text-right font-black text-blue-600 text-xs">${timePctVal}%</span>
+                                                </div>
+                                            </div>
+
+                                            <div>
+                                                <div class="flex justify-between items-center text-xs mb-1">
+                                                    <span class="font-bold text-slate-700">🎯 任务完成度 (销量达成进度)</span>
+                                                    <span class="text-[11px] text-slate-500">已完成 <b class="text-violet-700">${d.contractSt.toLocaleString()}</b> / 目标 <b class="text-slate-700">${d.contractTpp.toLocaleString()}</b> 条</span>
+                                                </div>
+                                                <div class="flex items-center gap-2">
+                                                    <div class="flex-1 h-5 bg-slate-200 rounded-md overflow-hidden relative shadow-inner">
+                                                        <div class="h-full bg-gradient-to-r ${salesBarGradient} rounded-md flex items-center justify-end pr-2 text-[10px] font-black text-white transition-all duration-300" style="width: ${salesPctVal > 0 ? salesPctWidth : 0}%">
+                                                            ${salesPctVal >= 15 ? salesPctVal + '%' : ''}
+                                                        </div>
+                                                    </div>
+                                                    <span class="w-12 text-right font-black ${d.isNextMonthRule ? 'text-violet-700' : 'text-emerald-600'} text-xs">${salesPctVal}%</span>
+                                                </div>
+                                            </div>
+
+                                            <div class="text-[11px] pt-1.5 flex justify-between items-center border-t border-slate-200">
+                                                ${statusSummary}
+                                                <span class="text-slate-500 shrink-0">剩余: ${rmDisp}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 1~12 月度明细拆解（含 TPP + ST + SO延保 三行） -->
+                                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                        <div class="px-3 py-1.5 bg-slate-100 text-[11px] font-bold text-slate-600 flex justify-between items-center border-b border-slate-200">
+                                            <span>${targetYear}年 月度明细拆解 (TPP / ST / SO延保)</span>
+                                            ${d.isNextMonthRule ? '<span class="text-violet-700">🟣 紫色为GASN签约次月起算考核月</span>' : ''}
+                                        </div>
+                                        <table class="w-full text-[11px] text-center border-collapse">
+                                            <thead class="bg-slate-50 text-slate-600">
+                                                <tr>
+                                                    <th class="px-1.5 py-1.5 font-medium border-b border-r border-slate-200">月份</th>
+                                                    ${['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'].map((m, idx) => `<th class="py-1.5 border-b border-slate-200 font-medium ${isMonthInContract(idx) && d.isNextMonthRule ? 'bg-violet-100/70 text-violet-800 font-bold' : (!isMonthInContract(idx) ? 'bg-slate-100 text-slate-400 line-through' : '')}">${m}</th>`).join('')}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td class="px-1.5 py-1.5 bg-slate-50 font-medium border-r border-b border-slate-200 text-amber-600">TPP</td>
+                                                    ${mTpp.map((v, idx) => `<td class="py-1.5 border-b border-slate-100 ${!isMonthInContract(idx) ? 'bg-slate-100/60 text-slate-300 line-through' : (d.isNextMonthRule ? 'bg-violet-50/40 font-bold text-amber-600' : (v!==null?'font-bold text-amber-600':'text-slate-300'))}">${v!==null?v:'-'}</td>`).join('')}
+                                                </tr>
+                                                <tr>
+                                                    <td class="px-1.5 py-1.5 bg-slate-50 font-medium border-r border-b border-slate-200 text-blue-600">ST</td>
+                                                    ${mSt.map((v, idx) => `<td class="py-1.5 border-b border-slate-100 ${!isMonthInContract(idx) ? 'bg-slate-100/60 text-slate-300 line-through' : (d.isNextMonthRule ? 'bg-violet-50/40 font-bold text-violet-700' : (v!==null?'font-bold text-blue-600':'text-slate-300'))}">${v!==null?v:'-'}</td>`).join('')}
+                                                </tr>
+                                                <tr>
+                                                    <td class="px-1.5 py-1.5 bg-amber-50/60 font-bold border-r border-slate-200 text-emerald-700">SO延保</td>
+                                                    ${mSo.map((v) => `<td class="py-1.5 bg-amber-50/20 ${v!==null && v>0 ? 'font-bold text-emerald-600' : 'text-slate-300'}">${v!==null?v:'-'}</td>`).join('')}
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <!-- 右侧历年快照表 + 三线月度趋势图 -->
+                                <div class="lg:w-[56%] flex flex-col gap-3">
+                                    <div class="w-full rounded-xl shadow-sm border border-slate-200 overflow-hidden bg-white">
+                                        <table class="w-full text-xs text-center border-collapse">
+                                            <thead class="bg-blue-50/50 text-slate-600">
+                                                <tr>
+                                                    <th class="px-2.5 py-1.5 font-medium border-b border-r border-slate-200">自然年全量快照 (纯GY)</th>
+                                                    <th class="px-2.5 py-1.5 font-medium border-b border-slate-200">2021年</th><th class="px-2.5 py-1.5 font-medium border-b border-slate-200">2022年</th><th class="px-2.5 py-1.5 font-medium border-b border-slate-200">2023年</th>
+                                                    <th class="px-2.5 py-1.5 font-medium border-b border-slate-200">2024年</th><th class="px-2.5 py-1.5 font-medium border-b border-slate-200">2025年</th><th class="px-2.5 py-1.5 font-bold text-blue-600 border-b border-slate-200">2026年</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="text-slate-600">
+                                                <tr>
+                                                    <td class="px-2.5 py-1 bg-slate-50 font-medium border-r border-b border-slate-200">当年门店级别</td>
+                                                    <td class="border-b text-[11px]">${h21.type}</td><td class="border-b text-[11px]">${h22.type}</td><td class="border-b text-[11px]">${h23.type}</td>
+                                                    <td class="border-b text-[11px]">${h24.type}</td><td class="border-b text-[11px]">${h25.type}</td><td class="border-b text-[11px] font-bold text-blue-600">${h26.type}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="px-2.5 py-1 bg-slate-50 font-medium border-r border-b border-slate-200">年度目标 (TPP)</td>
+                                                    <td class="border-b">${h21.tpp}</td><td class="border-b">${h22.tpp}</td><td class="border-b">${h23.tpp}</td>
+                                                    <td class="border-b">${h24.tpp}</td><td class="border-b">${h25.tpp}</td><td class="border-b font-bold text-blue-600">${h26.tpp}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="px-2.5 py-1 bg-slate-50 font-medium border-r border-b border-slate-200">年度实销 (ST)</td>
+                                                    <td class="border-b font-bold">${h21.st}</td><td class="border-b font-bold">${h22.st}</td><td class="border-b font-bold">${h23.st}</td>
+                                                    <td class="border-b font-bold">${h24.st}</td><td class="border-b font-bold">${h25.st}</td><td class="border-b font-bold text-blue-600">${h26.st}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="px-2.5 py-1 bg-slate-50 font-medium border-r border-b border-slate-200">自然年达成率</td>
+                                                    <td class="border-b">${h21.ach}</td><td class="border-b">${h22.ach}</td><td class="border-b">${h23.ach}</td>
+                                                    <td class="border-b">${h24.ach}</td><td class="border-b">${h25.ach}</td><td class="border-b font-bold text-blue-600">${h26.ach}</td>
+                                                </tr>
+                                                <tr class="bg-amber-50/30">
+                                                    <td class="px-2.5 py-1 bg-amber-50/70 font-bold border-r border-b border-slate-200 text-amber-700">年度延保 (SO)</td>
+                                                    <td class="border-b font-bold text-amber-700">${h21.so}</td><td class="border-b font-bold text-amber-700">${h22.so}</td><td class="border-b font-bold text-amber-700">${h23.so}</td>
+                                                    <td class="border-b font-bold text-amber-700">${h24.so}</td><td class="border-b font-bold text-amber-700">${h25.so}</td><td class="border-b font-black text-amber-600">${h26.so}</td>
+                                                </tr>
+                                                <tr class="bg-amber-50/20">
+                                                    <td class="px-2.5 py-1 bg-amber-50/70 font-medium border-r border-slate-200 text-amber-700">延保转化率 (SO/ST)</td>
+                                                    <td class="py-1 text-amber-700">${h21.soRate}</td><td class="py-1 text-amber-700">${h22.soRate}</td><td class="py-1 text-amber-700">${h23.soRate}</td>
+                                                    <td class="py-1 text-amber-700">${h24.soRate}</td><td class="py-1 text-amber-700">${h25.soRate}</td><td class="py-1 font-bold text-amber-600">${h26.soRate}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 h-[245px] relative">
+                                        <div class="text-[11px] font-bold ${d.isNextMonthRule ? 'text-violet-700' : 'text-blue-600'} mb-1 absolute top-2 left-4 z-10">【${targetYear}年】单店月度 TPP、ST 与 SO(延保) 趋势图</div>
+                                        <div id="mini-chart-${cleanDomId}" class="mini-chart mt-2"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    `;
+
+                    if (d.history && d.history[targetYear]) {
+                        const hist = d.history[targetYear];
+                        const chartDom = getEl(`mini-chart-${cleanDomId}`);
+                        if (chartDom) {
+                            if (miniCharts[cleanDomId]) miniCharts[cleanDomId].dispose();
+                            let myChart = echarts.init(chartDom);
+                            miniCharts[cleanDomId] = myChart;
+                            setTimeout(() => {
+                                myChart.resize();
+                                myChart.setOption({
+                                    tooltip: { trigger: 'axis' },
+                                    legend: { data: ['月度目标(TPP)', '实际进货(ST)', '延保扫码(SO)'], bottom: 0, icon: 'circle', itemWidth: 10, itemHeight: 10, textStyle: {fontSize: 10} },
+                                    grid: { left: '5%', right: '5%', bottom: '20%', top: 30, containLabel: true },
+                                    xAxis: { type: 'category', boundaryGap: false, data: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'], axisLabel: { fontSize: 10 } },
+                                    yAxis: { type: 'value', splitLine: { lineStyle: { type: 'dashed' } } },
+                                    series: [
+                                        { name: '月度目标(TPP)', type: 'line', step: 'end', itemStyle: { color: '#f59e0b' }, lineStyle: { width: 2, type: 'dashed' }, data: hist.monthTpp || Array(12).fill(null), label:{show:false} },
+                                        { name: '实际进货(ST)', type: 'line', connectNulls: true, smooth: true, itemStyle: { color: d.isNextMonthRule ? '#7c3aed' : '#3b82f6' }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{offset: 0, color: d.isNextMonthRule ? 'rgba(124,58,237,0.35)' : 'rgba(59,130,246,0.4)'}, {offset: 1, color: 'rgba(255,255,255,0)'}]) }, data: hist.monthSt || Array(12).fill(null), label:{show:true, position:'top', fontSize:10} },
+                                        { name: '延保扫码(SO)', type: 'line', connectNulls: true, smooth: true, itemStyle: { color: '#10b981' }, lineStyle: { width: 2 }, data: hist.monthSO || Array(12).fill(null), label:{show:true, position:'bottom', fontSize:9, color:'#059669'} }
+                                    ]
+                                });
+                            }, 50);
+                        }
+                    }
+                }
+            };
+
+            const macroBtns = getEls('.macro-btn');
+            macroBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    macroBtns.forEach(b => {
+                        b.classList.remove('active');
+                        b.classList.add('hover:bg-white');
+                    });
+                    btn.classList.add('active');
+                    btn.classList.remove('hover:bg-white');
+                    activeMacro = btn.getAttribute('data-macro');
+                    
+                    [activeFilters.levels, activeFilters.zTypes, activeFilters.achievements, activeFilters.contractAchievements, activeFilters.actTypes, activeFilters.tiers, activeFilters.contractStatus].forEach(s => s.clear());
+                    activeFilters.expiry = null; activeFilters.asm = null;
+                    updateDropdowns();
+                    updateView();
+                });
+            });
+
+            const achModeBtns = getEls('.ach-mode-btn');
+            achModeBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    achModeBtns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    achChartMode = btn.getAttribute('data-mode');
+                    const yrSel = getEl('yearSelect');
+                    if (yrSel) updateDashboards(parseInt(yrSel.value) || maxYearFound);
+                });
+            });
+
+            const rankSortBtns = getEls('.rank-sort-btn');
+            rankSortBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const targetType = btn.getAttribute('data-sort');
+                    if(rankSortConfig.type === targetType) {
+                        rankSortConfig.order = rankSortConfig.order === 'desc' ? 'asc' : 'desc';
+                    } else {
+                        rankSortConfig.type = targetType;
+                        rankSortConfig.order = 'desc'; 
+                    }
+                    rankSortBtns.forEach(b => {
+                        b.classList.remove('active');
+                        let t = b.getAttribute('data-sort');
+                        let baseText = t==='total'?'总量':(t==='new'?'新建':'翻改');
+                        b.innerText = baseText + ' ▼';
+                    });
+                    btn.classList.add('active');
+                    let curText = targetType==='total'?'总量':(targetType==='new'?'新建':'翻改');
+                    btn.innerText = curText + (rankSortConfig.order === 'desc' ? ' ▼' : ' ▲');
+                    
+                    const yrSel = getEl('yearSelect');
+                    if(yrSel) updateDashboards(parseInt(yrSel.value) || maxYearFound);
+                });
+            });
+
+            ['yearSelect', 'regionSelect', 'provinceSelect', 'citySelect', 'onlyCurrentYearSignCheck'].forEach(id => {
+                const el = getEl(id);
+                if(el) el.addEventListener('change', (e) => {
+                    if(e.target === getEl('regionSelect')) { getEl('provinceSelect').value = ''; getEl('citySelect').value = ''; }
+                    if(e.target === getEl('provinceSelect')) { getEl('citySelect').value = ''; }
+                    updateDropdowns(); updateView();
+                });
+            });
+
+            const searchInput = getEl('searchInput');
+            const searchClearBtn = getEl('searchClearBtn');
+            window.clearSearchInput = function() {
+                if(searchInput) searchInput.value = '';
+                if(searchClearBtn) searchClearBtn.classList.add('hidden');
+                updateDropdowns();
+                updateView();
+            };
+            if(searchInput) {
+                searchInput.addEventListener('input', () => {
+                    if (searchClearBtn) {
+                        if (searchInput.value.trim().length > 0) searchClearBtn.classList.remove('hidden');
+                        else searchClearBtn.classList.add('hidden');
+                    }
+                    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+                    searchDebounceTimer = setTimeout(() => {
+                        updateDropdowns();
+                        updateView();
+                    }, 300);
+                });
+            }
+            
+            window.resetAllFilters = function() {
+                if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+                getEl('searchInput').value = ''; 
+                if(searchClearBtn) searchClearBtn.classList.add('hidden');
+                getEl('yearSelect').value = maxYearFound; 
+                if(getEl('onlyCurrentYearSignCheck')) getEl('onlyCurrentYearSignCheck').checked = false;
+                getEl('regionSelect').value = ''; getEl('provinceSelect').value = ''; getEl('citySelect').value = ''; 
+                [activeFilters.levels, activeFilters.zTypes, activeFilters.achievements, activeFilters.contractAchievements, activeFilters.actTypes, activeFilters.tiers, activeFilters.contractStatus].forEach(s => s.clear());
+                activeFilters.expiry = null; activeFilters.asm = null; 
+                updateDropdowns();
+                updateView();
+            };
+
+            const resetBtn = getEl('resetBtn');
+            if(resetBtn) resetBtn.addEventListener('click', window.resetAllFilters);
+
+            const headers = getEls('#tableHeaders th');
+            if (headers) {
+                headers.forEach(th => {
+                    th.addEventListener('click', () => {
+                        const col = th.getAttribute('data-sort');
+                        if(!col) return;
+                        
+                        if (sortState.column === col) {
+                            sortState.order = sortState.order === 'desc' ? 'asc' : 'desc';
+                        } else {
+                            sortState.column = col;
+                            sortState.order = 'desc'; 
+                        }
+                        
+                        headers.forEach(h => {
+                            h.classList.remove('sort-asc', 'sort-desc');
+                            if (!h.classList.contains('sort-icon')) h.classList.add('sort-icon');
+                        });
+                        th.classList.remove('sort-icon');
+                        th.classList.add(`sort-${sortState.order}`);
+                        updateView();
+                    });
+                });
+            }
+
+            // 区域销售便捷导出功能
+            const exportBtn = getEl('exportBtn');
+            if(exportBtn) {
+                exportBtn.addEventListener('click', () => {
+                    if(filteredData.length === 0) { alert('当前筛选条件下没有可导出的门店数据！请先点击【恢复默认】。'); return; }
+                    try {
+                        const curReg = getEl('regionSelect').value || '全区';
+                        const curProv = getEl('provinceSelect').value || '';
+                        const curAsm = activeFilters.asm || '';
+                        const targetYear = parseInt(getEl('yearSelect').value) || maxYearFound;
+                        const actLabelMap = { 'New': 'New (新建)', 'Refurbish': 'Refurbish (翻改/续约)', 'Retained': 'Retained (存续履约老店)' };
+                        
+                        const exportData = filteredData.map(d => ({
+                            "门店编码": d.id || '', 
+                            "门店名称": d.name || '', 
+                            "负责销售": d.asm || '', 
+                            "业务体系": d.isGasn ? 'GASN核心体系' : (d.isGrc ? 'GRC零售俱乐部' : '其他'),
+                            [`${targetYear}年门店类型(级别)`]: d.type || '', 
+                            [`${targetYear}年客户代码(Z01/Z02)`]: d.zType || '',
+                            "建店类别": actLabelMap[d.actType] || d.actType || '', 
+                            "城市线级": d.tier || '', 
+                            "标准大区": d.region || '', 
+                            "省份": d.province || '', 
+                            "城市": d.city || '',
+                            "合同签约日": d.signDate || '', 
+                            "合同到期日": d.expireDate || '', 
+                            "合同状态": d.remainMonths >= 0 ? '合约期内(有效)' : '已过期或无合约',
+                            "月度签约量(条/月)": d.monthlySignTpp || 0,
+                            "合同总月数": d.totalContractMonths || 0,
+                            "已履约月数": d.elapsedContractMonths || 0,
+                            "剩余月数": d.signDate === '-' ? '-' : (d.remainMonths < 0 ? '已过期' : d.remainMonths),
+                            "合约完成度_时间进度(%)": Number((d.timeProgressPct || 0).toFixed(1)),
+                            "任务完成度_合约期达成率(%)": Number((d.contractAchieve || 0).toFixed(2)),
+                            "考核核算口径": d.calcRuleText || '',
+                            [`${targetYear}年 自然年TPP`]: d.tpp || 0, 
+                            [`${targetYear}年 自然年ST`]: d.st || 0, 
+                            [`${targetYear}年 当年达成率(%)`]: Number((d.achievement || 0).toFixed(2)),
+                            [`${targetYear}年 18+ 销量`]: d.st18 || 0, 
+                            "18+占比(%)": Number((d.st18Rate || 0).toFixed(2)),
+                            [`${targetYear}年 延保(SO)`]: d.so || 0, 
+                            "延保率(%)": Number((d.soRate || 0).toFixed(2)),
+                            "【考核总目标】TPP(含次月规则)": d.contractTpp || 0, 
+                            "【累计完成】ST(含次月规则)": d.contractSt || 0, 
+                            "合约剩余缺口(条)": Math.max(0, (d.contractTpp || 0) - (d.contractSt || 0)),
+                            "2021 TPP": (d.history[2021]||{}).tpp||0, "2021 ST": (d.history[2021]||{}).st||0, "2021 SO": (d.history[2021]||{}).so||0,
+                            "2022 TPP": (d.history[2022]||{}).tpp||0, "2022 ST": (d.history[2022]||{}).st||0, "2022 SO": (d.history[2022]||{}).so||0,
+                            "2023 TPP": (d.history[2023]||{}).tpp||0, "2023 ST": (d.history[2023]||{}).st||0, "2023 SO": (d.history[2023]||{}).so||0,
+                            "2024 TPP": (d.history[2024]||{}).tpp||0, "2024 ST": (d.history[2024]||{}).st||0, "2024 SO": (d.history[2024]||{}).so||0,
+                            "2025 TPP": (d.history[2025]||{}).tpp||0, "2025 ST": (d.history[2025]||{}).st||0, "2025 SO": (d.history[2025]||{}).so||0,
+                            "2026 TPP": (d.history[2026]||{}).tpp||0, "2026 ST": (d.history[2026]||{}).st||0, "2026 SO": (d.history[2026]||{}).so||0
+                        }));
+                        const ws = XLSX.utils.json_to_sheet(exportData);
+                        const wb = XLSX.utils.book_new(); 
+                        XLSX.utils.book_append_sheet(wb, ws, "门店业绩明细");
+                        const fileTag = [curReg, curProv, curAsm].filter(Boolean).join('_');
+                        XLSX.writeFile(wb, `客户成长管理_${targetYear}年_${fileTag}_门店明细.xlsx`);
+                    } catch(e) { alert("生成导出文件时遇到错误：" + e.message); }
+                });
+            }
+
+            // ==========================================
+            // 4. 主数据上传解析 (V56：彻底修复 18+ 重复累加与年份数字误匹配)
+            // ==========================================
+            const fileUpload = getEl('fileUpload');
+            if (fileUpload) {
+                fileUpload.addEventListener('change', async function(e) {
+                    const filesList = e.target.files;
+                    if (!filesList || filesList.length === 0) return;
+
+                    getEl('mainContent').style.display = 'none';
+                    getEl('initMessage').style.display = 'flex';
+                    getEl('initIcon').innerHTML = '<div class="loader"></div>';
+                    getEl('initIcon').className = 'w-24 h-24 bg-white rounded-full flex items-center justify-center text-blue-600 shadow-lg mb-6 border border-blue-100';
+                    getEl('initTitle').innerText = `正在急速解析主数据...`;
+                    getEl('initSub').innerText = `已启用 V56 18+防重复累加与年份数字隔离引擎...`;
+
+                    await new Promise(r => setTimeout(r, 100));
+
+                    try {
+                        const fileDataArray = [];
+                        for (let i = 0; i < filesList.length; i++) {
+                            let yearMatch = filesList[i].name.match(/(202[1-9])/);
+                            let year = yearMatch ? parseInt(yearMatch[1]) : 2026;
+                            fileDataArray.push({ name: filesList[i].name, year: year, buffer: await filesList[i].arrayBuffer() });
+                        }
+                        fileDataArray.sort((a, b) => a.year - b.year);
+
+                        let updatedMap = globalStoreMap || {};
+                        for (let f of fileDataArray) {
+                            for (let id in updatedMap) {
+                                if (updatedMap[id].history && updatedMap[id].history[f.year]) {
+                                    delete updatedMap[id].history[f.year];
+                                }
+                            }
+                        }
+
+                        const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+
+                        const cleanProvName = (prov) => {
+                            if(!prov) return '';
+                            let p = String(prov).trim().replace(/ /g, '').replace(/\n/g, '');
+                            if (p.includes('北京')) return '北京市'; if (p.includes('天津')) return '天津市';
+                            if (p.includes('上海')) return '上海市'; if (p.includes('重庆')) return '重庆市';
+                            if (p.includes('内蒙古')) return '内蒙古自治区'; if (p.includes('西藏')) return '西藏自治区';
+                            if (p.includes('新疆')) return '新疆维吾尔自治区'; if (p.includes('广西')) return '广西壮族自治区';
+                            if (p.includes('宁夏')) return '宁夏回族自治区'; if (p.includes('香港')) return '香港特别行政区';
+                            if (p.includes('澳门')) return '澳门特别行政区';
+                            if (!p.endsWith('省') && !p.endsWith('市') && !p.endsWith('区') && !p.endsWith('州')) return p + '省';
+                            return p;
+                        };
+
+                        const getExact = (row, keys, excludes=[]) => {
+                            const rowKeys = Object.keys(row);
+                            for (let key of keys) {
+                                const cleanKey = key.replace(/ /g, '').replace(/\n/g, '').toLowerCase();
+                                let matchedKey = rowKeys.find(k => {
+                                    let ck = k.replace(/ /g, '').replace(/\n/g, '').toLowerCase();
+                                    let match = ck.includes(cleanKey);
+                                    if(match && excludes.length > 0) {
+                                        for(let ex of excludes) { if(ck.includes(ex.toLowerCase())) return false; }
+                                    }
+                                    return match;
+                                });
+                                if (matchedKey && row[matchedKey] !== undefined && row[matchedKey] !== '') return String(row[matchedKey]).trim();
+                            }
+                            return '';
+                        };
+
+                        // 【核心修正】：先将表头中的 4 位年份数字 (如 2018~2029) 剥离，再检测是否包含真正的 18/19/20 寸规格标识，杜绝把 "2025/2026" 当成 20寸！
+                        const isRimSizeHeader = (rawHeader) => {
+                            let s = String(rawHeader).toLowerCase().replace(/20[1-2]\d/g, '').replace(/[\s\n_-]/g, '');
+                            return s.includes('18') || s.includes('19') || s.includes('20');
+                        };
+
+                        for (let f of fileDataArray) {
+                            let year = f.year;
+                            getEl('initTitle').innerText = `解析中: ${f.name}...`;
+                            await new Promise(r => setTimeout(r, 20)); 
+
+                            const data = new Uint8Array(f.buffer);
+                            const workbook = XLSX.read(data, { type: 'array', cellDates: true, dense: true });
+                            
+                            const priorities = ['明细', '信息', 'gasn', 'data', '数据', 'sheet1', 'sheet 1'];
+                            let targetSheet = workbook.SheetNames[0];
+                            for (let p of priorities) {
+                                let match = workbook.SheetNames.find(n => n.toLowerCase().includes(p));
+                                if (match) { targetSheet = match; break; }
+                            }
+                            
+                            const rawRows2D = XLSX.utils.sheet_to_json(workbook.Sheets[targetSheet], { header: 1, raw: true, defval: '' });
+                            if (!rawRows2D || rawRows2D.length === 0) continue;
+
+                            let headerRowIdx = 0;
+                            for (let rIdx = 0; rIdx < Math.min(15, rawRows2D.length); rIdx++) {
+                                const rowCells = rawRows2D[rIdx].map(c => String(c).replace(/\s/g, '').toLowerCase());
+                                const hasCodeCol = rowCells.some(c => c.includes('编码') || c.includes('编号') || c.includes('code') || c.includes('80开头'));
+                                const hasLocOrType = rowCells.some(c => c.includes('省') || c.includes('城市') || c.includes('审批') || c.includes('类型') || c.includes('tpp'));
+                                if (hasCodeCol && hasLocOrType) {
+                                    headerRowIdx = rIdx;
+                                    break;
+                                }
+                            }
+
+                            const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[targetSheet], { range: headerRowIdx, raw: true, defval: '' });
+                            if (!jsonData || jsonData.length === 0) continue;
+
+                            const allHeaders = Object.keys(jsonData[0]);
+                            const mTppColNames = Array(12).fill(null);
+                            const mStColNames = Array(12).fill(null);
+                            const mSoColLists = Array.from({length: 12}, () => []);
+                            const m18ColNames = Array(12).fill(null);
+
+                            months.forEach((m, i) => {
+                                let tppCandidates = allHeaders.filter(h => {
+                                    let ck = String(h).toLowerCase().replace(/[\s\n_-]/g, '');
+                                    if (ck.includes('cp') || ck.includes('固铂') || isRimSizeHeader(h) || ck.includes('vmi') || ck.includes('rtm') || ck.includes('rate') || ck.includes('达成') || ck.includes('%') || ck.includes('占比')) return false;
+                                    return (ck === 'tpp' + m || ck === m + 'tpp' || ck === 'gytpp' + m || ck === 'gy' + m + 'tpp');
+                                });
+                                if (tppCandidates.length === 0) {
+                                    tppCandidates = allHeaders.filter(h => {
+                                        let kLower = String(h).toLowerCase();
+                                        let ck = kLower.replace(/[\s\n_-]/g, '');
+                                        if (ck.includes('cp') || ck.includes('固铂') || isRimSizeHeader(h) || ck.includes('vmi') || ck.includes('rtm') || ck.includes('rate') || ck.includes('达成') || ck.includes('%') || ck.includes('占比')) return false;
+                                        let mReg = new RegExp('(^|[^a-z])' + m + '([^a-z]|$)', 'i');
+                                        return mReg.test(kLower) && ck.includes('tpp');
+                                    });
+                                }
+                                if (tppCandidates.length > 0) mTppColNames[i] = tppCandidates[0];
+
+                                let stCandidates = allHeaders.filter(h => {
+                                    let ck = String(h).toLowerCase().replace(/[\s\n_-]/g, '');
+                                    if (ck.includes('cp') || ck.includes('固铂') || isRimSizeHeader(h) || ck.includes('vmi') || ck.includes('rtm') || ck.includes('so') || ck.includes('scan') || ck.includes('rate') || ck.includes('达成') || ck.includes('%') || ck.includes('占比')) return false;
+                                    return (ck === 'gy' + m + 'st' || ck === 'gyst' + m || ck === m + 'st' || ck === 'st' + m);
+                                });
+                                if (stCandidates.length === 0) {
+                                    stCandidates = allHeaders.filter(h => {
+                                        let kLower = String(h).toLowerCase();
+                                        let ck = kLower.replace(/[\s\n_-]/g, '');
+                                        if (ck.includes('cp') || ck.includes('固铂') || isRimSizeHeader(h) || ck.includes('vmi') || ck.includes('rtm') || ck.includes('so') || ck.includes('scan') || ck.includes('rate') || ck.includes('达成') || ck.includes('%') || ck.includes('占比')) return false;
+                                        let mReg = new RegExp('(^|[^a-z])' + m + '([^a-z]|$)', 'i');
+                                        return mReg.test(kLower) && ck.includes('st');
+                                    });
+                                }
+                                if (stCandidates.length > 0) mStColNames[i] = stCandidates[0];
+
+                                mSoColLists[i] = allHeaders.filter(h => {
+                                    let kLower = String(h).toLowerCase();
+                                    let ck = kLower.replace(/[\s\n_-]/g, '');
+                                    if (ck.includes('cp') || ck.includes('固铂') || isRimSizeHeader(h) || ck.includes('rate') || ck.includes('达成') || ck.includes('%') || ck.includes('占比') || ck.includes('率')) return false;
+                                    let isSO = kLower.includes('scan-out') || kLower.includes('scanout') || kLower.includes('扫码') || kLower.includes('延保') || /\bso\b/i.test(String(h)) || ck === m + 'so' || ck === 'so' + m || ck === 'gy' + m + 'so' || ck === 'gyso' + m;
+                                    let mReg = new RegExp('(^|[^a-z])' + m + '([^a-z]|$)', 'i');
+                                    return isSO && (mReg.test(kLower) || ck.startsWith(m) || ck.endsWith(m));
+                                });
+
+                                // 月度 18+ 列（每月只取首个匹配的 18+ ST 列，防止同月重复列相加）
+                                let c18Candidates = allHeaders.filter(h => {
+                                    let kLower = String(h).toLowerCase();
+                                    let ck = kLower.replace(/20[1-2]\d/g, '').replace(/[\s\n_-]/g, '');
+                                    if (ck.includes('cp') || ck.includes('固铂') || ck.includes('rate') || ck.includes('达成') || ck.includes('%') || ck.includes('占比') || ck.includes('tpp') || ck.includes('so') || ck.includes('scan')) return false;
+                                    let mReg = new RegExp('(^|[^a-z])' + m + '([^a-z]|$)', 'i');
+                                    return (ck.includes('18') || ck.includes('18寸')) && (mReg.test(kLower) || ck.startsWith(m) || ck.endsWith(m));
+                                });
+                                if (c18Candidates.length > 0) m18ColNames[i] = c18Candidates[0];
+                            });
+
+                            const ytdTppCol = allHeaders.find(h => {
+                                let ck = String(h).toLowerCase().replace(/[\s\n_-]/g, '');
+                                return (ck === 'gyytdtpp' || ck === 'ytdtpp' || ck === '累计tpp' || ck === 'tppytd') && !ck.includes('cp');
+                            });
+                            const contractSignTppCol = allHeaders.find(h => {
+                                let ck = String(h).toLowerCase().replace(/[\s\n_-]/g, '');
+                                return (ck.includes(year + '年tpp签约') || ck.includes(year + 'tpp签约') || ck === 'tpp签约' || ck === '合同约定目标') && !ck.includes('cp');
+                            });
+                            const ytdStCol = allHeaders.find(h => {
+                                let ck = String(h).toLowerCase().replace(/[\s\n_-]/g, '');
+                                return (ck === 'gyytdst' || ck === 'ytdst' || ck === '累计st' || ck === 'stytd' || ck === '累计销量') && !ck.includes('cp') && !isRimSizeHeader(h);
+                            });
+
+                            // 【核心修正】：直接锁定表内官方 18''&+ YTD ST 汇总列（该列在原表中本身已包含 18/19/20 寸及以上全部销量，绝不重复叠加！）
+                            const ytd18Col = allHeaders.find(h => {
+                                let ck = String(h).toLowerCase().replace(/20[1-2]\d/g, '').replace(/[\s\n_-]/g, '');
+                                return (ck.includes('18') || ck.includes('18寸')) && (ck.includes('ytd') || ck.includes('累计') || ck.includes('total') || (ck.includes('+') && ck.includes('st'))) && !ck.includes('cp') && !ck.includes('占比') && !ck.includes('%') && !ck.includes('rate');
+                            });
+
+                            const ytdSoCol = allHeaders.find(h => {
+                                let kLower = String(h).toLowerCase();
+                                let ck = kLower.replace(/[\s\n_-]/g, '');
+                                let isSO = kLower.includes('scan-out') || kLower.includes('scanout') || kLower.includes('扫码') || kLower.includes('延保') || /\bso\b/i.test(String(h));
+                                return isSO && (ck.includes('ytd') || ck.includes('累计') || ck.includes('total')) && !ck.includes('cp') && !isRimSizeHeader(h) && !ck.includes('%') && !ck.includes('rate') && !ck.includes('率');
+                            });
+
+                            for (let row of jsonData) {
+                                let idRaw = getExact(row, ['门店编码', '80开头编码', '编码', '客户编号', '客户编码', '编号', 'code']);
+                                if (!idRaw) continue;
+                                let id = String(idRaw).trim().replace(/\.0$/, '');
+                                if (id === '-' || id === 'undefined' || id.length < 4) continue;
+                                if (!/\d/.test(id)) continue;
+                                if (/小计|合计|总计|row|label|total/i.test(id)) continue;
+
+                                if (!updatedMap[id]) updatedMap[id] = { id: id, history: {} };
+                                
+                                let monthTpp = Array(12).fill(null);
+                                let monthSt = Array(12).fill(null);
+                                let monthSO = Array(12).fill(null);
+                                let monthSt18 = Array(12).fill(null);
+
+                                for (let i = 0; i < 12; i++) {
+                                    if (mTppColNames[i]) {
+                                        let v = toNumSafe(row[mTppColNames[i]]);
+                                        if (!isNaN(v)) monthTpp[i] = v;
+                                    }
+                                    if (mStColNames[i]) {
+                                        let v = toNumSafe(row[mStColNames[i]]);
+                                        if (!isNaN(v)) monthSt[i] = v;
+                                    }
+                                    if (mSoColLists[i].length > 0) {
+                                        let mSoMax = null;
+                                        for (let colName of mSoColLists[i]) {
+                                            let v = toNumSafe(row[colName]);
+                                            if (!isNaN(v)) mSoMax = mSoMax === null ? v : Math.max(mSoMax, v);
+                                        }
+                                        monthSO[i] = mSoMax;
+                                    }
+                                    if (m18ColNames[i]) {
+                                        let v = toNumSafe(row[m18ColNames[i]]);
+                                        if (!isNaN(v)) monthSt18[i] = v;
+                                    }
+                                }
+
+                                let sumMonthTpp = monthTpp.reduce((acc, v) => acc + (v || 0), 0);
+                                let sumMonthSt = monthSt.reduce((acc, v) => acc + (v || 0), 0);
+                                let sumMonthSO = monthSO.reduce((acc, v) => acc + (v || 0), 0);
+                                let sumMonthSt18 = monthSt18.reduce((acc, v) => acc + (v || 0), 0);
+
+                                let ytdTppVal = ytdTppCol ? toNumSafe(row[ytdTppCol]) : NaN;
+                                let signTppVal = contractSignTppCol ? toNumSafe(row[contractSignTppCol]) : NaN;
+                                let ytdStVal = ytdStCol ? toNumSafe(row[ytdStCol]) : NaN;
+                                let ytd18Val = ytd18Col ? toNumSafe(row[ytd18Col]) : NaN;
+                                let ytdSoVal = ytdSoCol ? toNumSafe(row[ytdSoCol]) : NaN;
+
+                                let finalTpp = !isNaN(ytdTppVal) ? ytdTppVal : (!isNaN(signTppVal) ? signTppVal : sumMonthTpp);
+                                let finalSt = !isNaN(ytdStVal) ? ytdStVal : sumMonthSt;
+                                // 18+ 严格取官方 18''&+ YTD ST 列（无汇总列时才用月度 18+ 之和），且绝不超过该店当年总实销 finalSt！
+                                let rawSt18 = !isNaN(ytd18Val) ? ytd18Val : sumMonthSt18;
+                                let finalSt18 = finalSt > 0 ? Math.min(rawSt18, finalSt) : 0;
+
+                                let finalSO = sumMonthSO > 0 ? Math.max(sumMonthSO, isNaN(ytdSoVal) ? 0 : ytdSoVal) : (!isNaN(ytdSoVal) ? ytdSoVal : 0);
+
+                                const typeCandidateKeys = year <= 2022 
+                                    ? ['审批类型', '申请类型', '审批级别', '申请级别', '零售店类型', '门店级别', '店铺级别', '级别', 'RTM门店分类', '门店类型']
+                                    : ['零售店类型', '审批类型', '级别', 'RTM门店分类', '门店级别'];
+                                
+                                let yearType = '-';
+                                for (let tk of typeCandidateKeys) {
+                                    let val = getExact(row, [tk]);
+                                    if (val) {
+                                        let norm = normalizeStoreType(val);
+                                        if (checkIsGasnStore(norm) || checkIsGrcStore(norm)) {
+                                            yearType = norm;
+                                            break;
+                                        } else if (yearType === '-' && norm !== '-' && !/^Z0[012]$/i.test(norm)) {
+                                            yearType = norm;
+                                        }
+                                    }
+                                }
+
+                                if (!checkIsGasnStore(yearType) && !checkIsGrcStore(yearType)) {
+                                    for (let k of allHeaders) {
+                                        let cellVal = row[k];
+                                        if (cellVal === '' || cellVal === null || cellVal === undefined || typeof cellVal === 'number') continue;
+                                        let sVal = String(cellVal).trim();
+                                        if (sVal.length > 25) continue;
+                                        let norm = normalizeStoreType(sVal);
+                                        if (checkIsGasnStore(norm) || checkIsGrcStore(norm)) {
+                                            yearType = norm;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                let rowZRaw = getExact(row, ['门店类型', 'Z代码', '客户类型']);
+                                let yearZType = (rowZRaw && rowZRaw !== '-' && rowZRaw !== 'undefined') ? String(rowZRaw).trim() : '-';
+                                if (yearZType !== '-' && (checkIsGasnStore(yearZType) || checkIsGrcStore(yearZType))) {
+                                    if (yearType === '-') yearType = normalizeStoreType(yearZType);
+                                    yearZType = '-';
+                                }
+
+                                let rowAsmRaw = getExact(row, ['固特异销售姓名', '销售姓名', '销售人员', 'asm', '销售']);
+                                let yearAsm = (rowAsmRaw && rowAsmRaw !== '-' && rowAsmRaw !== 'undefined') ? String(rowAsmRaw).trim() : '-';
+
+                                let rowActRaw = getExact(row, ['建店类别act', '建店类别', '审批类型', 'act', '建店']);
+                                let yearAct = normalizeActType(rowActRaw);
+
+                                let sDateRaw = getExact(row, ['签约时间', '加盟时间', '签约日期']);
+                                let yearSignDate = parseDateSafe(sDateRaw);
+                                let eDateRaw = getExact(row, ['合同到期日期', '合同到期时间', '合同到期']);
+                                let yearExpireDate = parseDateSafe(eDateRaw);
+                                let createdRaw = getExact(row, ['CREATED', '创建时间', '建档时间', '年份']);
+                                let yearSignYear = 0;
+                                if (yearSignDate !== '-') {
+                                    yearSignYear = parseInt(yearSignDate.split('-')[0]) || 0;
+                                } else if (createdRaw) {
+                                    let cm = String(createdRaw).match(/(20[1-2]\d)/);
+                                    if (cm) yearSignYear = parseInt(cm[1]);
+                                }
+
+                                if (updatedMap[id].history[year]) {
+                                    let prev = updatedMap[id].history[year];
+                                    prev.tpp += finalTpp;
+                                    prev.monthSumTpp += sumMonthTpp;
+                                    prev.st += finalSt;
+                                    prev.monthSumSt += sumMonthSt;
+                                    prev.st18 = Math.min(prev.st, prev.st18 + finalSt18);
+                                    prev.so += finalSO;
+                                    prev.rowCount = (prev.rowCount || 1) + 1;
+                                    for (let i = 0; i < 12; i++) {
+                                        if (monthTpp[i] !== null) prev.monthTpp[i] = (prev.monthTpp[i] || 0) + monthTpp[i];
+                                        if (monthSt[i] !== null) prev.monthSt[i] = (prev.monthSt[i] || 0) + monthSt[i];
+                                        if (monthSO[i] !== null) prev.monthSO[i] = (prev.monthSO[i] || 0) + monthSO[i];
+                                    }
+                                    if (checkIsGasnStore(yearType) || prev.type === '-') prev.type = yearType;
+                                    if (yearZType !== '-' && prev.zType === '-') prev.zType = yearZType;
+                                    if (yearAsm !== '-' && prev.asm === '-') prev.asm = yearAsm;
+                                    if (yearAct !== 'Retained') prev.actType = yearAct;
+                                    if (yearSignDate !== '-') prev.signDate = yearSignDate;
+                                    if (yearExpireDate !== '-') prev.expireDate = yearExpireDate;
+                                    if (yearSignYear > 0) prev.signYear = yearSignYear;
+                                } else {
+                                    updatedMap[id].history[year] = { 
+                                        tpp: finalTpp, 
+                                        monthSumTpp: sumMonthTpp,
+                                        st: finalSt, 
+                                        monthSumSt: sumMonthSt,
+                                        monthTpp, 
+                                        monthSt, 
+                                        monthSO,
+                                        st18: finalSt18, 
+                                        so: finalSO,
+                                        type: yearType,
+                                        zType: yearZType,
+                                        asm: yearAsm,
+                                        actType: yearAct,
+                                        signDate: yearSignDate,
+                                        expireDate: yearExpireDate,
+                                        signYear: yearSignYear,
+                                        rowCount: 1
+                                    };
+                                }
+
+                                if (yearType !== '-' && !updatedMap[id].earliestKnownType) {
+                                    updatedMap[id].earliestKnownType = yearType;
+                                }
+                                updatedMap[id].type = updatedMap[id].history[year].type;
+                                if (yearZType !== '-') updatedMap[id].zType = yearZType; else if (!updatedMap[id].zType) updatedMap[id].zType = '-';
+                                if (yearAsm !== '-') updatedMap[id].asm = yearAsm; else if (!updatedMap[id].asm) updatedMap[id].asm = '-';
+                                if (yearAct !== 'Retained') updatedMap[id].actType = yearAct; else if (!updatedMap[id].actType) updatedMap[id].actType = 'Retained';
+
+                                let name = getExact(row, ['门店名称', '名称', '店名', '客户名']);
+                                if (name && name !== '-' && name !== 'undefined') {
+                                    updatedMap[id].name = String(name).trim();
+                                } else if (!updatedMap[id].name) {
+                                    updatedMap[id].name = `门店_${id}`;
+                                }
+
+                                let rawProv = getExact(row, ['省份', 'province', '省']);
+                                let cProv = cleanProvName(rawProv);
+                                if (cProv) updatedMap[id].province = cProv;
+                                else if (!updatedMap[id].province) updatedMap[id].province = '-';
+
+                                let assignedReg = getRegionFromProv(updatedMap[id].province);
+                                if(assignedReg !== 'Unknown') {
+                                    updatedMap[id].region = assignedReg;
+                                } else {
+                                    let rawReg = getExact(row, ['销售区域', '大区', 'region', 'so区域']);
+                                    let cleanReg = rawReg ? String(rawReg).trim().toUpperCase() : '';
+                                    if (cleanReg.includes('NE') || cleanReg.includes('NORTH')) cleanReg = 'North';
+                                    else if (cleanReg.includes('EAST')) cleanReg = 'East';
+                                    else if (cleanReg.includes('SOUTH')) cleanReg = 'South';
+                                    else if (cleanReg.includes('CENTRAL')) cleanReg = 'Central';
+                                    else cleanReg = updatedMap[id].region || 'Unknown';
+                                    updatedMap[id].region = cleanReg;
+                                }
+
+                                let cityVal = getExact(row, ['城市', 'City']).replace(/ /g, '');
+                                if (cityVal) updatedMap[id].city = cityVal; else if (!updatedMap[id].city) updatedMap[id].city = '-';
+
+                                let tierVal = getExact(row, ['Tier', '城市线级', '线级']);
+                                if (tierVal) updatedMap[id].tier = tierVal; else if (!updatedMap[id].tier) updatedMap[id].tier = '-';
+
+                                if (sDateRaw !== '') updatedMap[id].signDate = sDateRaw;
+                                if (createdRaw !== '') updatedMap[id].createdDate = createdRaw;
+                                if (eDateRaw !== '') updatedMap[id].expireDate = eDateRaw;
+                            }
+                        }
+
+                        globalStoreMap = updatedMap;
+                        await localforage.setItem('customer_store_map_final', globalStoreMap); 
+                        getEl('dbIndicator').classList.replace('bg-slate-300', 'bg-emerald-500');
+                        getEl('dbIndicator').classList.add('animate-pulse');
+                        getEl('dbStatusText').innerHTML = `数据已就绪 (共 ${Object.keys(globalStoreMap).length} 店)`;
+                        
+                        buildTableDataAndRender();
+
+                    } catch (err) {
+                        getEl('mainContent').style.display = 'none';
+                        getEl('initMessage').style.display = 'flex';
+                        getEl('initIcon').innerHTML = '⚠️';
+                        getEl('initTitle').innerText = '解析阻断';
+                        getEl('initSub').innerText = err.message;
+                    }
+                });
+            }
+
+            // ==========================================
+            // 5. 构建数据与双轨分离引擎
+            // ==========================================
+            function buildTableDataAndRender() {
+                try {
+                    const rawList = [];
+                    const currentDate = new Date();
+                    let maxYear = 2021; let allYears = new Set();
+
+                    for(let id in globalStoreMap) {
+                        Object.keys(globalStoreMap[id].history).forEach(y => { 
+                            const yInt = parseInt(y);
+                            if(!isNaN(yInt)) { 
+                                allYears.add(yInt); 
+                                if(yInt > maxYear) maxYear = yInt; 
+                            }
+                        });
+                    }
+                    maxYearFound = maxYear;
+
+                    const activeBtn = document.querySelector('.macro-btn.active');
+                    if (activeBtn) activeMacro = activeBtn.getAttribute('data-macro');
+
+                    const yArr = Array.from(allYears).sort((a,b)=>b-a);
+                    getEl('yearSelect').innerHTML = yArr.map(y => `<option value="${y}">${y}年${y === maxYear ? ' (最新)' : ''}</option>`).join('');
+
+                    for (let id in globalStoreMap) {
+                        let s = globalStoreMap[id];
+                        if (!s || !s.history || Object.keys(s.history).length === 0) continue; 
+                        
+                        let earliestKnownType = s.earliestKnownType || '-';
+                        if (earliestKnownType === '-') {
+                            const hYearsAsc = Object.keys(s.history).map(Number).sort((a,b)=>a-b);
+                            for (let y of hYearsAsc) {
+                                let t = normalizeStoreType(s.history[y].type);
+                                if (t !== '-') { earliestKnownType = t; break; }
+                            }
+                            if (earliestKnownType === '-' && s.type) earliestKnownType = normalizeStoreType(s.type);
+                        }
+
+                        const sName = (s.name && s.name !== '-') ? s.name : `门店_${id}`;
+                        const latestHist = s.history[maxYear] || {};
+                        const sType = normalizeStoreType((latestHist.type !== undefined) ? latestHist.type : (s.type || '-'));
+                        const isGasn = checkIsGasnStore(sType);
+                        const isGrc = checkIsGrcStore(sType);
+
+                        const sDate = parseDateSafe(s.signDate);
+                        const eDate = parseDateSafe(s.expireDate);
+                        let rMonths = -1;
+                        let signYear = 0;
+                        let signMonth = 0;
+                        
+                        if (sDate !== '-') {
+                            const parts = sDate.split('-');
+                            signYear = parseInt(parts[0]);
+                            signMonth = parseInt(parts[1]) || 1;
+                        } else if (s.createdDate) {
+                            const cMatch = String(s.createdDate).match(/(20[1-2]\d)/);
+                            if (cMatch) signYear = parseInt(cMatch[1]);
+                        }
+
+                        if (eDate !== '-') {
+                            const exp = new Date(eDate);
+                            rMonths = (exp.getFullYear() - currentDate.getFullYear()) * 12 + (exp.getMonth() - currentDate.getMonth());
+                        }
+
+                        let monthlySignTpp = 0;
+                        let latestRecordedYear = maxYear;
+                        let latestRecordedMonth = 10; 
+                        const histYearsDesc = Object.keys(s.history || {}).map(Number).sort((a,b)=>b-a);
+                        for (let y of histYearsDesc) {
+                            const h = s.history[y];
+                            if (h && h.monthTpp) {
+                                for (let m = 11; m >= 0; m--) {
+                                    if (h.monthTpp[m] !== null && h.monthTpp[m] > 0) {
+                                        if (monthlySignTpp === 0) monthlySignTpp = h.monthTpp[m];
+                                        break;
+                                    }
+                                }
+                            }
+                            if (monthlySignTpp === 0 && h && h.tpp > 0) {
+                                monthlySignTpp = Math.round(h.tpp / 12);
+                            }
+                            if (monthlySignTpp > 0) break;
+                        }
+                        if (s.history && s.history[maxYear] && s.history[maxYear].monthSt) {
+                            for (let m = 11; m >= 0; m--) {
+                                if (s.history[maxYear].monthSt[m] !== null && s.history[maxYear].monthSt[m] > 0) {
+                                    latestRecordedMonth = m + 1;
+                                    break;
+                                }
+                            }
+                        }
+
+                        const isInContract = (rMonths >= 0 && sDate !== '-' && eDate !== '-');
+                        let isNextMonthRule = false;
+                        let calcStartYear = signYear;
+                        let calcStartMonth = signMonth;
+
+                        let totalContractMonths = 0;
+                        let elapsedContractMonths = 0;
+                        let timeProgressPct = 0;
+
+                        let cTpp = 0; let cSt = 0;
+                        const yearAdjusted = {};
+
+                        if (isGasn && sDate !== '-' && eDate !== '-') {
+                            let eParts = eDate.split('-');
+                            let eY = parseInt(eParts[0]);
+                            let eM = parseInt(eParts[1]) || 12;
+                            if(isNaN(eY) || eY > 2100) eY = maxYear;
+
+                            if (isInContract) {
+                                isNextMonthRule = true;
+                                if (signMonth === 12) {
+                                    calcStartYear = signYear + 1;
+                                    calcStartMonth = 1;
+                                } else {
+                                    calcStartYear = signYear;
+                                    calcStartMonth = signMonth + 1;
+                                }
+                            } else {
+                                calcStartYear = (isNaN(signYear) || signYear < 1990) ? 2021 : signYear;
+                                calcStartMonth = 1;
+                            }
+
+                            totalContractMonths = Math.max(1, (eY - calcStartYear) * 12 + (eM - calcStartMonth + 1));
+                            let rawElapsed = (latestRecordedYear - calcStartYear) * 12 + (latestRecordedMonth - calcStartMonth + 1);
+                            elapsedContractMonths = Math.max(0, Math.min(totalContractMonths, rawElapsed));
+                            timeProgressPct = totalContractMonths > 0 ? (elapsedContractMonths / totalContractMonths * 100) : 0;
+
+                            for(let y = calcStartYear; y <= eY; y++) {
+                                let h = s.history && s.history[y];
+                                if (!h) continue;
+
+                                let startM = (y === calcStartYear) ? calcStartMonth : 1;
+                                let endM = (y === eY) ? eM : 12;
+                                let activeMCount = Math.max(0, endM - startM + 1);
+
+                                if (isNextMonthRule && (startM > 1 || endM < 12)) {
+                                    let yTpp = 0, ySt = 0;
+                                    let hasMonthData = false;
+                                    for (let mIdx = startM - 1; mIdx < endM; mIdx++) {
+                                        if (h.monthTpp && h.monthTpp[mIdx] !== null) { yTpp += h.monthTpp[mIdx]; hasMonthData = true; }
+                                        if (h.monthSt && h.monthSt[mIdx] !== null) { ySt += h.monthSt[mIdx]; hasMonthData = true; }
+                                    }
+                                    if (!hasMonthData) {
+                                        yTpp = monthlySignTpp > 0 ? (monthlySignTpp * activeMCount) : Math.round(h.tpp * (activeMCount / 12));
+                                        ySt = Math.round(h.st * (activeMCount / 12));
+                                    } else if (yTpp === 0 && monthlySignTpp > 0) {
+                                        yTpp = monthlySignTpp * activeMCount;
+                                    }
+                                    cTpp += yTpp;
+                                    cSt += ySt;
+                                    yearAdjusted[y] = { tpp: yTpp, st: ySt, startM, endM, isPartial: true };
+                                } else {
+                                    let yTpp = h.tpp > 0 ? h.tpp : (monthlySignTpp > 0 ? monthlySignTpp * activeMCount : 0);
+                                    cTpp += yTpp;
+                                    cSt += h.st;
+                                    yearAdjusted[y] = { tpp: yTpp, st: h.st, startM: 1, endM: 12, isPartial: false };
+                                }
+                            }
+                        } else {
+                            let latestH = (s.history && s.history[maxYear]) ? s.history[maxYear] : { tpp: 0, st: 0 };
+                            cTpp = latestH.tpp;
+                            cSt = latestH.st;
+                            totalContractMonths = 12;
+                            elapsedContractMonths = latestRecordedMonth;
+                            timeProgressPct = (elapsedContractMonths / 12) * 100;
+                        }
+
+                        const calcRuleText = isNextMonthRule 
+                            ? `GASN次月起算 (${calcStartYear}-${String(calcStartMonth).padStart(2,'0')}起)` 
+                            : (isGasn ? `GASN自然年累计` : `GRC当年达成考核`);
+
+                        rawList.push({
+                            id: s.id, name: sName, type: sType, earliestKnownType: earliestKnownType, zType: s.zType || '-', tier: s.tier || '-',
+                            isGasn: isGasn, isGrc: isGrc,
+                            region: s.region || 'Unknown', province: s.province || '-', city: s.city || '-',
+                            asm: s.asm || '-', actType: normalizeActType(s.actType), 
+                            signYear: signYear, signMonth: signMonth,
+                            signDate: sDate, expireDate: eDate, remainMonths: rMonths,
+                            monthlySignTpp: monthlySignTpp,
+                            totalContractMonths: totalContractMonths,
+                            elapsedContractMonths: elapsedContractMonths,
+                            timeProgressPct: timeProgressPct,
+                            isInContract: isInContract,
+                            isNextMonthRule: isNextMonthRule,
+                            calcStartYear: calcStartYear,
+                            calcStartMonth: calcStartMonth,
+                            calcRuleText: calcRuleText,
+                            yearAdjusted: yearAdjusted,
+                            contractTpp: cTpp, contractSt: cSt, 
+                            contractAchieve: cTpp > 0 ? (cSt / cTpp * 100) : (cTpp === 0 && cSt > 0 ? 100 : 0),
+                            history: s.history || {},
+                        });
+                    }
+
+                    storeData = rawList;
+                    
+                    getEl('initMessage').style.display = 'none';
+                    getEl('macroContainer').style.display = 'block';
+                    getEl('mainContent').style.display = 'block';
+                    void getEl('mainContent').offsetWidth; 
+                    
+                    const chartIds = ['chartMap', 'chartRanking', 'chartGlobalMonthly', 'chartActTypePerf', 'chartRegionPerf', 'chartType', 'chartTier', 'chartExpiry', 'chartAchieve'];
+                    chartIds.forEach(id => {
+                        const el = getEl(id);
+                        if (el) el.removeAttribute('_echarts_instance_');
+                    });
+
+                    if(!charts.map) charts.map = echarts.init(getEl('chartMap'));
+                    if(!charts.ranking) charts.ranking = echarts.init(getEl('chartRanking'));
+                    if(!charts.globalMonthly) charts.globalMonthly = echarts.init(getEl('chartGlobalMonthly'));
+                    if(!charts.actTypePerf) charts.actTypePerf = echarts.init(getEl('chartActTypePerf'));
+                    if(!charts.regionPerf) charts.regionPerf = echarts.init(getEl('chartRegionPerf'));
+
+                    if(!charts.type) charts.type = echarts.init(getEl('chartType'));
+                    if(!charts.tier) charts.tier = echarts.init(getEl('chartTier'));
+                    if(!charts.expiry) charts.expiry = echarts.init(getEl('chartExpiry'));
+                    if(!charts.achieve) charts.achieve = echarts.init(getEl('chartAchieve'));
+                    
+                    window.addEventListener('resize', () => { 
+                        Object.values(charts).forEach(c => { if(c) c.resize(); }); 
+                        Object.values(miniCharts).forEach(c => { if(c) c.resize(); });
+                    });
+
+                    charts.map.off('click');
+                    charts.map.on('click', params => {
+                        if (!params.name) return;
+                        const fullProv = PROV_SHORT_TO_LONG[params.name] || params.name;
+                        
+                        if (getEl('provinceSelect').value === fullProv) {
+                            getEl('regionSelect').value = '';
+                            getEl('provinceSelect').value = '';
+                            getEl('citySelect').value = '';
+                        } else {
+                            const reg = getRegionFromProv(fullProv);
+                            if(reg !== 'Unknown') getEl('regionSelect').value = reg; else getEl('regionSelect').value = '';
+                            updateDropdowns(); 
+                            
+                            let provExists = false;
+                            for(let i=0; i<getEl('provinceSelect').options.length; i++) {
+                                if(getEl('provinceSelect').options[i].value === fullProv) { provExists = true; break; }
+                            }
+                            if (provExists) getEl('provinceSelect').value = fullProv; else getEl('provinceSelect').value = '';
+                            getEl('citySelect').value = '';
+                        }
+                        updateDropdowns(); updateView();
+                    });
+
+                    charts.expiry.off('click'); charts.expiry.on('click', params => { activeFilters.expiry = activeFilters.expiry === params.name ? null : params.name; updateDropdowns(); updateView(); });
+                    
+                    charts.ranking.off('click'); 
+                    charts.ranking.on('click', params => { 
+                        let asmName = params.name;
+                        if (params.componentType === 'yAxis') asmName = params.value; 
+                        if (asmName) {
+                            activeFilters.asm = activeFilters.asm === asmName ? null : asmName; 
+                            updateDropdowns(); updateView(); 
+                        }
+                    });
+
+                    charts.type.off('click'); charts.type.on('click', params => { if(activeFilters.levels.has(params.name)) activeFilters.levels.delete(params.name); else activeFilters.levels.add(params.name); updateDropdowns(); updateView(); });
+                    charts.tier.off('click'); charts.tier.on('click', params => { if(activeFilters.tiers.has(params.name)) activeFilters.tiers.delete(params.name); else activeFilters.tiers.add(params.name); updateDropdowns(); updateView(); });
+
+                    charts.achieve.off('click');
+                    charts.achieve.on('click', params => {
+                        const valMap = { '100%+': '>=100', '80-100%': '80-100', '50-80%': '50-80', '<50%': '<50' };
+                        const val = valMap[params.name];
+                        if(val) {
+                            const targetSet = achChartMode === 'contract' ? activeFilters.contractAchievements : activeFilters.achievements;
+                            if(targetSet.has(val)) targetSet.delete(val); else targetSet.add(val);
+                            updateDropdowns(); updateView();
+                        }
+                    });
+
+                    updateDropdowns();
+                    updateView();
+
+                } catch(e) {
+                    console.error("Rendering Error:", e);
+                }
+            }
+
+            // 获取门店在 targetYear 的自然年指标（附带物理上限纠偏保护，防止旧缓存中误累加的 st18 超过 st）
+            function getStoreYearMetrics(d, targetYear) {
+                let hist = d.history[targetYear] || {tpp:0, st:0, monthTpp:Array(12).fill(null), monthSt:Array(12).fill(null), monthSO:Array(12).fill(null), st18:0, so:0};
+                const yp = getStoreYearProfile(d, targetYear);
+                let tpp = hist.tpp || 0;
+                let st = hist.st || 0;
+                let rawSt18 = hist.st18 || 0;
+                // 若旧缓存因误加了 '2025/2026' 列导致 st18 > st，自动纠偏限制在 [0, st] 范围内
+                let safeSt18 = st > 0 ? Math.min(rawSt18, st) : 0;
+                let achievement = tpp > 0 ? (st / tpp * 100) : (tpp === 0 && st > 0 ? 100 : 0);
+                let contractAch = yp.isGasn ? d.contractAchieve : achievement;
+                return { 
+                    tpp, 
+                    st, 
+                    achievement, 
+                    contractAch, 
+                    st18: safeSt18, 
+                    so: hist.so || 0,
+                    profile: yp
+                };
+            }
+
+            function matchAchRange(val, rangeKey) {
+                if(rangeKey === '<50') return val < 50;
+                if(rangeKey === '50-80') return val >= 50 && val < 80;
+                if(rangeKey === '80-100') return val >= 80 && val < 100;
+                if(rangeKey === '>=100') return val >= 100;
+                return false;
+            }
+
+            function matchesCriteria(d, targetYear, ignoreDimension = null) {
+                if (ignoreDimension !== 'year' && !d.history[targetYear]) return false;
+
+                const yp = getStoreYearProfile(d, targetYear);
+                if (ignoreDimension !== 'macro') {
+                    if (activeMacro === 'GASN' && !yp.isGasn) return false;
+                    if (activeMacro === 'GRC' && !yp.isGrc) return false;
+                }
+
+                const onlyCurYearSign = getEl('onlyCurrentYearSignCheck') ? getEl('onlyCurrentYearSignCheck').checked : false;
+                if (ignoreDimension !== 'signYearCheck' && onlyCurYearSign) {
+                    if (yp.actType !== 'New' && yp.actType !== 'Refurbish') return false;
+                    if (yp.signYear !== targetYear) return false;
+                }
+
+                const sq = getEl('searchInput') ? getEl('searchInput').value.toLowerCase().trim() : '';
+                if(sq && !String(d.id).toLowerCase().includes(sq) && !d.name.toLowerCase().includes(sq) && !yp.asm.toLowerCase().includes(sq)) return false;
+
+                const sr = getEl('regionSelect') ? getEl('regionSelect').value : '';
+                const sp = getEl('provinceSelect') ? getEl('provinceSelect').value : '';
+                const sc = getEl('citySelect') ? getEl('citySelect').value : '';
+                if(ignoreDimension !== 'region' && sr && d.region !== sr) return false;
+                if(ignoreDimension !== 'province' && sp && d.province !== sp) return false;
+                if(ignoreDimension !== 'city' && sc && d.city !== sc) return false;
+
+                if(ignoreDimension !== 'levels' && activeFilters.levels.size > 0 && !activeFilters.levels.has(yp.type)) return false;
+                if(ignoreDimension !== 'zTypes' && activeFilters.zTypes.size > 0 && !activeFilters.zTypes.has(yp.zType)) return false;
+                if(ignoreDimension !== 'actTypes' && activeFilters.actTypes.size > 0 && !activeFilters.actTypes.has(yp.actType)) return false;
+                if(ignoreDimension !== 'tiers' && activeFilters.tiers.size > 0 && !activeFilters.tiers.has(d.tier)) return false;
+
+                if (ignoreDimension !== 'contractStatus' && activeFilters.contractStatus.size > 0) {
+                    let status = yp.remainMonths >= 0 ? 'Active' : 'Expired';
+                    if (!activeFilters.contractStatus.has(status)) return false;
+                }
+
+                if(ignoreDimension !== 'expiry' && activeFilters.expiry) {
+                    let cat = '';
+                    if(yp.remainMonths < 0) cat = '已过期';
+                    else if(yp.remainMonths <= 6) cat = '0-6个月';
+                    else if(yp.remainMonths <= 12) cat = '6-12个月';
+                    else cat = '1年以上';
+                    if(cat !== activeFilters.expiry) return false;
+                }
+                
+                if (ignoreDimension !== 'asm' && activeFilters.asm && yp.asm !== activeFilters.asm) return false;
+
+                const metrics = getStoreYearMetrics(d, targetYear);
+
+                if (ignoreDimension !== 'achievements' && activeFilters.achievements.size > 0) {
+                    let m = false;
+                    activeFilters.achievements.forEach(k => { if (matchAchRange(metrics.achievement, k)) m = true; });
+                    if(!m) return false;
+                }
+
+                if (ignoreDimension !== 'contractAchievements' && activeFilters.contractAchievements.size > 0) {
+                    let m = false;
+                    activeFilters.contractAchievements.forEach(k => { if (matchAchRange(metrics.contractAch, k)) m = true; });
+                    if(!m) return false;
+                }
+
+                return true;
+            }
+
+            function matchesAllTimeRankingPool(d) {
+                const ap = getStoreAllTimeProfile(d);
+                if (activeMacro === 'GASN' && !ap.isGasn) return false;
+                if (activeMacro === 'GRC' && !ap.isGrc) return false;
+
+                const sq = getEl('searchInput') ? getEl('searchInput').value.toLowerCase().trim() : '';
+                if(sq && !String(d.id).toLowerCase().includes(sq) && !d.name.toLowerCase().includes(sq) && !ap.asm.toLowerCase().includes(sq)) return false;
+
+                const sr = getEl('regionSelect') ? getEl('regionSelect').value : '';
+                const sp = getEl('provinceSelect') ? getEl('provinceSelect').value : '';
+                const sc = getEl('citySelect') ? getEl('citySelect').value : '';
+                if(sr && d.region !== sr) return false;
+                if(sp && d.province !== sp) return false;
+                if(sc && d.city !== sc) return false;
+
+                if(activeFilters.levels.size > 0 && !activeFilters.levels.has(ap.type)) return false;
+                if(activeFilters.zTypes.size > 0 && !activeFilters.zTypes.has(ap.zType)) return false;
+                if(activeFilters.actTypes.size > 0 && !activeFilters.actTypes.has(ap.actType)) return false;
+                if(activeFilters.tiers.size > 0 && !activeFilters.tiers.has(d.tier)) return false;
+
+                if (activeFilters.contractStatus.size > 0) {
+                    let status = d.remainMonths >= 0 ? 'Active' : 'Expired';
+                    if (!activeFilters.contractStatus.has(status)) return false;
+                }
+                if (activeFilters.asm && ap.asm !== activeFilters.asm) return false;
+
+                return true;
+            }
+
+            function updateDropdowns() {
+                try {
+                    const yrEl = getEl('yearSelect');
+                    const curYearVal = parseInt(yrEl ? yrEl.value : maxYearFound) || maxYearFound;
+                    const sReg = getEl('regionSelect').value, sProv = getEl('provinceSelect').value, sCity = getEl('citySelect').value;
+
+                    const allYearsSet = new Set([2026, 2025, 2024, 2023, 2022, 2021]);
+                    storeData.forEach(d => Object.keys(d.history || {}).forEach(y => allYearsSet.add(parseInt(y))));
+                    const yArr = Array.from(allYearsSet).filter(y => !isNaN(y)).sort((a,b)=>b-a);
+                    
+                    if (yrEl && yArr.length > 0) {
+                        yrEl.innerHTML = yArr.map(y => {
+                            const matchedStores = storeData.filter(d => Boolean(d.history[y]) && matchesCriteria(d, y, null));
+                            const uniqueCount = matchedStores.length;
+                            const totalRows = matchedStores.reduce((acc, d) => acc + ((d.history[y] && d.history[y].rowCount) ? d.history[y].rowCount : 1), 0);
+                            const countText = totalRows > uniqueCount ? `${uniqueCount.toLocaleString()} 家 (原表${totalRows.toLocaleString()}行)` : `${uniqueCount.toLocaleString()} 家店`;
+                            return `<option value="${y}" ${(uniqueCount===0 && curYearVal!==y)?'disabled':''}>${y}年 ${y===maxYearFound?'(最新)':''} — 共 ${countText}</option>`;
+                        }).join('');
+                        if (yArr.includes(curYearVal)) yrEl.value = curYearVal; else yrEl.value = maxYearFound;
+                    }
+
+                    const targetYear = parseInt(yrEl ? yrEl.value : maxYearFound) || maxYearFound;
+
+                    const baseForReg = storeData.filter(d => matchesCriteria(d, targetYear, 'region'));
+                    const regCounts = {};
+                    baseForReg.forEach(d => { regCounts[d.region] = (regCounts[d.region] || 0) + 1; });
+                    getEl('regionSelect').innerHTML = `<option value="">全部大区 (${baseForReg.length})</option>` + 
+                        ['East', 'Central', 'North', 'South'].map(r => {
+                            const c = regCounts[r] || 0;
+                            return `<option value="${r}" ${(c===0 && sReg!==r)?'disabled':''}>${r} (${c})</option>`;
+                        }).join('');
+                    getEl('regionSelect').value = sReg;
+
+                    let provCandidates = sReg ? (REGION_PROV_MAP[sReg] || []) : Object.values(REGION_PROV_MAP).flat();
+                    const baseForProv = storeData.filter(d => matchesCriteria(d, targetYear, 'province'));
+                    const provCounts = {};
+                    baseForProv.forEach(d => { provCounts[d.province] = (provCounts[d.province] || 0) + 1; });
+                    const cleanProvs = [...new Set(provCandidates)].sort();
+                    getEl('provinceSelect').innerHTML = `<option value="">全部省份</option>` + 
+                        cleanProvs.map(p => {
+                            const c = provCounts[p] || 0;
+                            return `<option value="${p}" ${(c===0 && sProv!==p)?'disabled':''}>${p} (${c})</option>`;
+                        }).join('');
+                    if (cleanProvs.includes(sProv)) getEl('provinceSelect').value = sProv; else getEl('provinceSelect').value = '';
+
+                    const newProv = getEl('provinceSelect').value;
+                    const baseForCity = storeData.filter(d => matchesCriteria(d, targetYear, 'city'));
+                    const cityCounts = {};
+                    baseForCity.forEach(d => { cityCounts[d.city] = (cityCounts[d.city] || 0) + 1; });
+                    const candidateCities = [...new Set(storeData.filter(d => (!sReg || d.region === sReg) && (!newProv || d.province === newProv)).map(d=>d.city).filter(v => v && v !== '-'))].sort();
+                    getEl('citySelect').innerHTML = `<option value="">全部城市</option>` + 
+                        candidateCities.map(cName => {
+                            const c = cityCounts[cName] || 0;
+                            return `<option value="${cName}" ${(c===0 && sCity!==cName)?'disabled':''}>${cName} (${c})</option>`;
+                        }).join('');
+                    if (candidateCities.includes(sCity)) getEl('citySelect').value = sCity; else getEl('citySelect').value = '';
+                } catch (e) {}
+            }
+
+            function syncAllVisuals(targetYear) {
+                const drillFiltersEl = getEl('drillFilters');
+                if(drillFiltersEl) {
+                    let html = '<span class="text-slate-400 font-bold text-[11px] w-full block mb-1">图表下钻联动:</span>';
+                    let count = 0;
+                    if (activeFilters.expiry) { html += `<span class="text-[11px] font-bold text-red-600 bg-red-50 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-red-100 border border-red-200 transition" onclick="window.clearFilter('expiry')">剩余期: ${activeFilters.expiry} ✖</span>`; count++; }
+                    if (activeFilters.asm) { html += `<span class="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-emerald-100 border border-emerald-200 transition" onclick="window.clearFilter('asm')">销售: ${activeFilters.asm} ✖</span>`; count++; }
+                    activeFilters.tiers.forEach(t => { html += `<span class="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg cursor-pointer hover:bg-indigo-100 border border-indigo-200 transition" onclick="window.clearFilterSet('tiers', '${t}')">线级: ${t} ✖</span>`; count++; });
+                    if(count === 0) html += `<span class="text-[11px] text-slate-400">未选定图表下钻（展示全局）</span>`;
+                    drillFiltersEl.innerHTML = html;
+                }
+
+                const renderSmartChips = (containerId, dimName, items, activeSet, matchFn, labelMap = null, activeColorCls = 'bg-blue-600 text-white border-blue-600 shadow-sm') => {
+                    const container = getEl(containerId);
+                    if(!container) return;
+                    const safeItems = items.filter(v => v !== null && v !== undefined && v !== '-');
+                    const candidatePool = storeData.filter(d => matchesCriteria(d, targetYear, dimName));
+
+                    container.innerHTML = safeItems.map(v => {
+                        const count = candidatePool.filter(d => matchFn(d, v)).length;
+                        const isSelected = activeSet.has(v);
+                        const isDisabled = (count === 0 && !isSelected);
+                        const display = labelMap ? labelMap[v] : v;
+                        
+                        let cls = '';
+                        if (isSelected) cls = activeColorCls;
+                        else if (isDisabled) cls = 'chip-disabled';
+                        else cls = 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100';
+
+                        return `<button class="gen-chip px-2 py-1 text-[11px] font-medium border rounded-lg transition-all ${cls}" data-val="${v}" ${isDisabled ? 'disabled title="与当前已选条件存在逻辑互斥(0家匹配)，请先恢复默认后再选"' : ''}>${display} <span class="text-[10px] opacity-75">(${count})</span></button>`;
+                    }).join('');
+
+                    container.querySelectorAll('.gen-chip').forEach(btn => {
+                        if (btn.disabled) return;
+                        btn.addEventListener('click', () => {
+                            const val = btn.getAttribute('data-val');
+                            if(activeSet.has(val)) activeSet.delete(val); else activeSet.add(val);
+                            updateDropdowns();
+                            updateView();
+                        });
+                    });
+                };
+                
+                renderSmartChips('filter-contractStatus', 'contractStatus', ['Active', 'Expired'], activeFilters.contractStatus, 
+                    (d, val) => (getStoreYearProfile(d, targetYear).remainMonths >= 0 ? 'Active' : 'Expired') === val,
+                    { 'Active': '有效(合约内)', 'Expired': '无效(已过期或无合约)' }
+                );
+
+                renderSmartChips('filter-actType', 'actTypes', ['New', 'Refurbish', 'Retained'], activeFilters.actTypes, 
+                    (d, val) => getStoreYearProfile(d, targetYear).actType === val,
+                    { 'New': 'New (新建)', 'Refurbish': 'Refurbish / Renew (翻改/续约)', 'Retained': 'Retained (存续履约/老店)' }
+                );
+                
+                const levelBlock = getEl('storeLevelFilterBlock');
+                if (activeMacro === 'GRC') {
+                    if (levelBlock) levelBlock.style.display = 'none';
+                } else {
+                    if (levelBlock) levelBlock.style.display = 'block';
+                    let validLevels = storeData.filter(d => {
+                        if (!d.history[targetYear]) return false;
+                        const yp = getStoreYearProfile(d, targetYear);
+                        return yp.isGasn;
+                    }).map(d => getStoreYearProfile(d, targetYear).type);
+
+                    renderSmartChips('filter-storeLevel', 'levels', [...new Set(validLevels)].sort(), activeFilters.levels, (d, val) => getStoreYearProfile(d, targetYear).type === val);
+                }
+
+                renderSmartChips('filter-zType', 'zTypes', [...new Set(storeData.map(d => getStoreYearProfile(d, targetYear).zType))].sort(), activeFilters.zTypes, (d, val) => getStoreYearProfile(d, targetYear).zType === val);
+                
+                const achLabelMap = { '<50': '< 50%', '50-80': '50%-80%', '80-100': '80%-100%', '>=100': '100%+' };
+
+                renderSmartChips('filter-achievement', 'achievements', ['<50', '50-80', '80-100', '>=100'], activeFilters.achievements, 
+                    (d, val) => matchAchRange(getStoreYearMetrics(d, targetYear).achievement, val),
+                    achLabelMap,
+                    'bg-blue-600 text-white border-blue-600 shadow-sm'
+                );
+
+                renderSmartChips('filter-contractAchievement', 'contractAchievements', ['<50', '50-80', '80-100', '>=100'], activeFilters.contractAchievements, 
+                    (d, val) => matchAchRange(getStoreYearMetrics(d, targetYear).contractAch, val),
+                    achLabelMap,
+                    'bg-violet-600 text-white border-violet-600 shadow-sm'
+                );
+            }
+
+            window.clearFilter = function(type) { activeFilters[type] = null; updateDropdowns(); updateView(); };
+            window.clearFilterSet = function(setName, val) { activeFilters[setName].delete(val); updateDropdowns(); updateView(); };
+
+            function updateView() {
+                try {
+                    const targetYear = parseInt(getEl('yearSelect') ? getEl('yearSelect').value : maxYearFound) || maxYearFound;
+                    syncAllVisuals(targetYear); 
+
+                    getEl('th-tpp').innerText = `${targetYear}年 TPP`;
+                    getEl('th-st').innerText = `${targetYear}年 ST`;
+                    getEl('th-ach').innerText = `${targetYear}年达成%`;
+                    getEl('kpi-title-tpp').innerText = `${targetYear}年 TPP 目标`;
+                    getEl('kpi-title-st').innerText = `${targetYear}年 ST 实销`;
+                    getEl('kpi-title-rate').innerText = `${targetYear}年 整体达成率`;
+
+                    filteredData = storeData.filter(d => matchesCriteria(d, targetYear, null)).map(d => {
+                        let out = {...d};
+                        const m = getStoreYearMetrics(d, targetYear);
+                        out.type = m.profile.type;
+                        out.zType = m.profile.zType;
+                        out.asm = m.profile.asm;
+                        out.actType = m.profile.actType;
+                        out.signDate = m.profile.signDate;
+                        out.expireDate = m.profile.expireDate;
+                        out.signYear = m.profile.signYear;
+                        out.remainMonths = m.profile.remainMonths;
+                        out.rowCount = m.profile.rowCount;
+                        out.isGasn = m.profile.isGasn;
+                        out.isGrc = m.profile.isGrc;
+
+                        out.tpp = m.tpp;
+                        out.st = m.st;
+                        out.achievement = m.achievement;
+                        out.st18 = m.st18;
+                        out.so = m.so;
+                        out.st18Rate = out.st > 0 ? Math.min(100, (out.st18 / out.st * 100)) : 0;
+                        out.soRate = out.st > 0 ? (out.so / out.st * 100) : 0;
+
+                        if (!out.isGasn) {
+                            out.contractTpp = out.tpp;
+                            out.contractSt = out.st;
+                            out.contractAchieve = out.achievement;
+                        }
+                        return out;
+                    });
+
+                    const conflictAlert = getEl('conflictAlert');
+                    if (storeData.length > 0 && filteredData.length === 0) {
+                        conflictAlert.classList.remove('hidden');
+                    } else {
+                        conflictAlert.classList.add('hidden');
+                    }
+
+                    if (sortState.column) {
+                        const numericCols = ['remainMonths', 'monthlySignTpp', 'timeProgressPct', 'tpp', 'st', 'achievement', 'st18', 'st18Rate', 'so', 'soRate', 'contractTpp', 'contractSt', 'contractAchieve'];
+                        filteredData.sort((a, b) => {
+                            let va = a[sortState.column]; let vb = b[sortState.column];
+                            if (va === null || va === undefined || va === '-') va = (numericCols.includes(sortState.column) ? -999999 : '');
+                            if (vb === null || vb === undefined || vb === '-') vb = (numericCols.includes(sortState.column) ? -999999 : '');
+                            if (numericCols.includes(sortState.column)) return sortState.order === 'asc' ? (Number(va) - Number(vb)) : (Number(vb) - Number(va));
+                            return sortState.order === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+                        });
+                    }
+
+                    updateDashboards(targetYear);
+
+                    const displayLimit = (activeFilters.asm || filteredData.length <= 300) ? 500 : 200;
+                    const displayData = filteredData.slice(0, displayLimit); 
+                    
+                    getEl('tableBody').innerHTML = displayData.map(d => {
+                        let achBadgeCls = 'text-slate-600 bg-slate-100 border-slate-200';
+                        if(d.achievement >= 100) achBadgeCls = 'text-emerald-700 bg-emerald-50 border-emerald-200';
+                        else if(d.achievement >= 80) achBadgeCls = 'text-blue-700 bg-blue-50 border-blue-200';
+                        else if(d.achievement >= 50) achBadgeCls = 'text-amber-700 bg-amber-50 border-amber-200';
+                        else achBadgeCls = 'text-red-600 bg-red-50 border-red-200';
+
+                        let contractTextCls = (d.isGasn && d.isNextMonthRule) ? 'text-violet-700 font-bold' : 'text-slate-600';
+                        let nextMonthTag = (d.isGasn && d.isNextMonthRule) 
+                            ? `<span class="text-[9px] bg-violet-600 text-white px-1 py-0.2 rounded font-bold shrink-0" title="${d.calcRuleText}">⚡次月起</span>` 
+                            : '';
+
+                        let rmDisp = `<span class="${d.remainMonths < 0 ? 'text-red-500 font-bold' : (d.remainMonths <= 6 ? 'text-amber-500 font-bold' : 'text-emerald-600 font-bold')}">${d.remainMonths < 0 ? '已过期' : d.remainMonths + 'M'}</span>`;
+                        if(d.signDate === '-') rmDisp = '-';
+
+                        const tPct = Math.min(100, Math.max(0, d.timeProgressPct || 0));
+                        const sPct = Math.min(100, Math.max(0, d.contractAchieve || 0));
+                        const timeBarColor = d.remainMonths < 0 ? 'bg-slate-400' : 'bg-blue-500';
+                        const salesBarColor = d.contractAchieve >= 100 ? 'bg-emerald-500' : (d.isGasn && d.isNextMonthRule ? (d.contractAchieve >= d.timeProgressPct ? 'bg-violet-600' : 'bg-amber-500') : (d.contractAchieve >= 80 ? 'bg-blue-600' : 'bg-red-500'));
+
+                        const dualProgressBarsHtml = `
+                            <div class="w-48 space-y-1.5 py-0.5">
+                                <div class="flex items-center gap-1.5" title="合约完成度(时间进度): 已履约 ${d.elapsedContractMonths}/${d.totalContractMonths} 个月 (${d.signDate} 至 ${d.expireDate})">
+                                    <span class="text-[10px] font-medium text-slate-500 w-7 shrink-0">合约</span>
+                                    <div class="flex-1 h-2.5 bg-slate-200 rounded-sm overflow-hidden shadow-inner">
+                                        <div class="h-full ${timeBarColor} rounded-sm" style="width:${tPct.toFixed(1)}%"></div>
+                                    </div>
+                                    <span class="text-[10px] font-bold text-blue-600 w-9 text-right shrink-0">${(d.timeProgressPct || 0).toFixed(0)}%</span>
+                                </div>
+                                <div class="flex items-center gap-1.5" title="任务完成度(销量进度): 累计完成 ${d.contractSt.toLocaleString()} / 目标 ${d.contractTpp.toLocaleString()} 条">
+                                    <span class="text-[10px] ${d.isGasn && d.isNextMonthRule ? 'text-violet-700 font-bold' : 'text-slate-600 font-medium'} w-7 shrink-0">任务</span>
+                                    <div class="flex-1 h-2.5 bg-slate-200 rounded-sm overflow-hidden shadow-inner">
+                                        <div class="h-full ${salesBarColor} rounded-sm" style="width:${sPct.toFixed(1)}%"></div>
+                                    </div>
+                                    <span class="text-[10px] font-black ${d.isGasn && d.isNextMonthRule ? 'text-violet-700' : 'text-slate-700'} w-9 text-right shrink-0">${d.contractAchieve.toFixed(1)}%</span>
+                                    ${nextMonthTag}
+                                </div>
+                            </div>
+                        `;
+
+                        let actDisp = '';
+                        if(d.actType === 'New') actDisp = `<span class="px-1 py-0.2 rounded bg-emerald-100 text-emerald-700 text-[10px] font-bold border border-emerald-200">New</span>`;
+                        else if(d.actType === 'Refurbish') actDisp = `<span class="px-1 py-0.2 rounded bg-blue-100 text-blue-700 text-[10px] font-bold border border-blue-200">Refur</span>`;
+                        else actDisp = `<span class="px-1 py-0.2 rounded bg-slate-100 text-slate-500 text-[10px] font-medium border border-slate-200" title="存续履约/往期老店">存续</span>`;
+
+                        let zTag = '';
+                        if (d.zType && d.zType !== '-') {
+                            let zCls = 'bg-slate-100 text-slate-600 border-slate-300';
+                            if (d.zType.includes('Z01')) zCls = 'bg-indigo-50 text-indigo-700 border-indigo-200 font-bold';
+                            else if (d.zType.includes('Z02')) zCls = 'bg-amber-50 text-amber-700 border-amber-200 font-bold';
+                            zTag = `<span class="px-1 py-0.2 rounded text-[10px] border ${zCls}">${d.zType}</span>`;
+                        }
+
+                        const cleanDomId = String(d.id).replace(/[^a-zA-Z0-9]/g, '_');
+
+                        return `
+                            <tr class="hover:bg-blue-50/50 transition-colors cursor-pointer group ${d.isGasn && d.isNextMonthRule ? 'bg-violet-50/15' : ''}" onclick="window.toggleRow('${cleanDomId}')">
+                                <td class="px-2 py-2.5 text-slate-900 font-bold">${d.id}</td>
+                                <td class="px-2 py-2.5 max-w-[130px] xl:max-w-[165px] truncate text-slate-700 font-medium group-hover:text-blue-600" title="${d.name}">${d.name}</td>
+                                <td class="px-1.5 py-2.5 text-slate-600 text-[11px] font-bold">${d.asm}</td>
+                                <td class="px-2 py-2.5"><div class="flex items-center gap-1"><span class="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-medium border border-slate-200">${d.type}</span>${zTag}${actDisp}</div></td>
+                                <td class="px-2 py-2.5 text-[11px] text-slate-500"><span class="text-slate-700 font-bold">${d.region}</span>·${getMapName(d.province)}-${d.city}</td>
+                                <td class="px-1.5 py-2.5 text-center">${rmDisp}</td>
+                                <td class="px-2 py-2.5 text-right font-bold text-indigo-700">${d.monthlySignTpp > 0 ? d.monthlySignTpp.toLocaleString() : '-'}</td>
+                                <td class="px-2 py-2.5 text-right font-medium text-slate-600">${d.tpp.toLocaleString()}</td>
+                                <td class="px-2 py-2.5 text-right font-bold text-blue-700">${d.st.toLocaleString()}</td>
+                                <td class="px-2 py-2.5 text-right bg-slate-50/60"><span class="inline-block px-1.5 py-0.5 rounded border font-bold text-[11px] ${achBadgeCls}">${d.achievement.toFixed(1)}%</span></td>
+                                <td class="px-1.5 py-2.5 text-right font-bold text-amber-600">${d.so > 0 ? d.so.toLocaleString() : '-'}</td>
+                                <td class="px-2 py-2.5 text-right ${contractTextCls} bg-violet-50/20">${d.contractTpp.toLocaleString()}</td>
+                                <td class="px-2 py-2.5 text-right ${contractTextCls} bg-violet-50/20">${d.contractSt.toLocaleString()}</td>
+                                <td class="px-2.5 py-2 bg-violet-50/40">${dualProgressBarsHtml}</td>
+                            </tr>
+                            <tr id="hist-${cleanDomId}" class="hidden hist-row bg-slate-50/90 border-b-2 border-slate-200 shadow-inner"></tr>`;
+                    }).join('');
+                    
+                    let statusText = `当前共匹配到 ${filteredData.length} 家门店`;
+                    if (filteredData.length > displayLimit) {
+                        statusText += ` (当前列表仅展示前 ${displayLimit} 家，继续输入编码或点击左侧【导出门店数据】可获取全量 ${filteredData.length} 家明细)`;
+                    } else if (filteredData.length === 0) {
+                        statusText = `⚠️ 当前筛选组合存在逻辑互斥（匹配门店数为 0），请点击左侧【重新恢复选择】或【恢复默认】`;
+                    }
+                    getEl('tableStatus').innerText = statusText;
+                    
+                } catch(e) { console.error(e); }
+            }
+
+            function updateDashboards(targetYear) {
+                try {
+                    let sTpp = 0, sSt = 0, s18 = 0, sSo = 0, totalRawRows = 0;
+                    const cnt = { 
+                        type: {}, tier: {}, map: {}, 
+                        expiry: { '已过期':0, '0-6个月':0, '6-12个月':0, '1年以上':0 }, 
+                        achYear: { '100%+':0, '80-100%':0, '50-80%':0, '<50%':0 },
+                        achContract: { '100%+':0, '80-100%':0, '50-80%':0, '<50%':0 }
+                    };
+                    const asmActs = {}; 
+                    const globalMonthTpp = Array(12).fill(null);
+                    const globalMonthSt = Array(12).fill(null);
+                    const actPerf = { 'New': {tpp:0, st:0}, 'Refurbish': {tpp:0, st:0}, 'Retained': {tpp:0, st:0} };
+                    const regPerf = { 'North': {tpp:0, st:0}, 'East': {tpp:0, st:0}, 'South': {tpp:0, st:0}, 'Central': {tpp:0, st:0} };
+
+                    const onlyCurYearSign = getEl('onlyCurrentYearSignCheck') ? getEl('onlyCurrentYearSignCheck').checked : false;
+                    const onlyRetainedSelected = activeFilters.actTypes.size === 1 && activeFilters.actTypes.has('Retained');
+                    const showRetainedInChart = includeRetainedInRank || onlyRetainedSelected;
+
+                    const rankBadge = getEl('rankModeBadge');
+                    if (rankBadge) {
+                        if (onlyCurYearSign) {
+                            rankBadge.innerText = `仅${targetYear}当年`;
+                            rankBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-300';
+                        } else {
+                            rankBadge.innerText = `有记录以来累计`;
+                            rankBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-50 text-indigo-700 border border-indigo-200';
+                        }
+                    }
+
+                    filteredData.forEach(d => {
+                        sTpp += d.tpp; 
+                        sSt += d.st; 
+                        s18 += d.st18; 
+                        sSo += d.so;
+                        totalRawRows += (d.rowCount || 1);
+                        
+                        if(d.type && d.type !== '-') cnt.type[d.type] = (cnt.type[d.type] || 0) + 1;
+                        if(d.tier !== '-') cnt.tier[d.tier] = (cnt.tier[d.tier] || 0) + 1;
+                        let pMap = getMapName(d.province);
+                        if(pMap) cnt.map[pMap] = (cnt.map[pMap] || 0) + 1;
+
+                        if(d.remainMonths < 0) cnt.expiry['已过期']++; else if(d.remainMonths <= 6) cnt.expiry['0-6个月']++; else if(d.remainMonths <= 12) cnt.expiry['6-12个月']++; else cnt.expiry['1年以上']++;
+                        
+                        const yAch = d.achievement;
+                        if(yAch >= 100) cnt.achYear['100%+']++; else if(yAch >= 80) cnt.achYear['80-100%']++; else if(yAch >= 50) cnt.achYear['50-80%']++; else cnt.achYear['<50%']++;
+
+                        const cAch = d.contractAchieve;
+                        if(cAch >= 100) cnt.achContract['100%+']++; else if(cAch >= 80) cnt.achContract['80-100%']++; else if(cAch >= 50) cnt.achContract['50-80%']++; else cnt.achContract['<50%']++;
+
+                        if(d.history[targetYear]) {
+                            const h = d.history[targetYear];
+                            for(let i=0; i<12; i++) {
+                                if(h.monthTpp && h.monthTpp[i] !== null) globalMonthTpp[i] = (globalMonthTpp[i] || 0) + h.monthTpp[i];
+                                if(h.monthSt && h.monthSt[i] !== null) globalMonthSt[i] = (globalMonthSt[i] || 0) + h.monthSt[i];
+                            }
+                            if(actPerf[d.actType]) { actPerf[d.actType].tpp += d.tpp; actPerf[d.actType].st += d.st; }
+                            if(regPerf[d.region]) { regPerf[d.region].tpp += d.tpp; regPerf[d.region].st += d.st; }
+                        }
+                    });
+
+                    // 计算右侧【销售开店榜】与顶部四个类别的统计汇总数
+                    let sumNewAll = 0, sumRefurAll = 0, sumRetAll = 0;
+                    if (onlyCurYearSign) {
+                        filteredData.forEach(d => {
+                            if (d.actType === 'New') sumNewAll++;
+                            else if (d.actType === 'Refurbish') sumRefurAll++;
+                            else sumRetAll++;
+
+                            if (d.asm && d.asm !== '-' && d.asm !== 'undefined') {
+                                if (!asmActs[d.asm]) asmActs[d.asm] = { New: 0, Refurbish: 0, Retained: 0 };
+                                asmActs[d.asm][d.actType] = (asmActs[d.asm][d.actType] || 0) + 1;
+                            }
+                        });
+                    } else {
+                        const allTimePool = storeData.filter(d => matchesAllTimeRankingPool(d));
+                        allTimePool.forEach(d => {
+                            const ap = getStoreAllTimeProfile(d);
+                            if (ap.actType === 'New') sumNewAll++;
+                            else if (ap.actType === 'Refurbish') sumRefurAll++;
+                            else sumRetAll++;
+
+                            if (ap.asm && ap.asm !== '-' && ap.asm !== 'undefined') {
+                                if (!asmActs[ap.asm]) asmActs[ap.asm] = { New: 0, Refurbish: 0, Retained: 0 };
+                                asmActs[ap.asm][ap.actType] = (asmActs[ap.asm][ap.actType] || 0) + 1;
+                            }
+                        });
+                    }
+
+                    const sMonthSumSt = globalMonthSt.reduce((a, b) => a + (b || 0), 0);
+                    const totalChartMonthTpp = globalMonthTpp.reduce((a, b) => a + (b || 0), 0);
+
+                    getEl('kpi-count').innerText = filteredData.length.toLocaleString();
+                    getEl('kpi-sub-count').innerText = totalRawRows > filteredData.length ? `对应原表 ${totalRawRows.toLocaleString()} 行记录` : `按${targetYear}年表内身份统计`;
+                    getEl('kpi-tpp').innerText = sTpp.toLocaleString();
+                    getEl('kpi-sub-tpp').innerText = `月度TPP合计: ${totalChartMonthTpp.toLocaleString()}`;
+                    getEl('kpi-st').innerText = sSt.toLocaleString();
+                    getEl('kpi-sub-st').innerText = `月度ST合计: ${sMonthSumSt.toLocaleString()}`;
+                    
+                    const mainRate = sTpp > 0 ? (sSt / sTpp * 100) : 0;
+                    getEl('kpi-contract-rate').innerText = mainRate.toFixed(1) + '%';
+                    getEl('kpi-sub-rate').innerText = `ST(${sSt.toLocaleString()}) ÷ TPP(${sTpp.toLocaleString()})`;
+
+                    // 18寸及以上占比（严格不超过 100%）
+                    const safe18Rate = sSt > 0 ? Math.min(100, (s18 / sSt * 100)) : 0;
+                    getEl('kpi-18plus').innerText = safe18Rate.toFixed(1) + '%';
+                    getEl('kpi-sub-18').innerText = `18+总量: ${s18.toLocaleString()} 条`;
+
+                    getEl('kpi-so-rate').innerText = sSt > 0 ? (sSo / sSt * 100).toFixed(1) + '%' : '0%';
+                    getEl('kpi-sub-so').innerText = `SO总量: ${sSo.toLocaleString()} 条`;
+
+                    try {
+                        const mNames = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+                        charts.globalMonthly.setOption({
+                            title: { text: `大盘追踪: ${targetYear}年 每月 TPP 目标 vs 每月 ST 实销`, textStyle: { fontSize: 14, color: '#1e293b', fontWeight:'bold' }, left: 10, top: 5 },
+                            tooltip: { trigger: 'axis' },
+                            legend: { data: ['每月目标 (TPP)', '每月实销 (ST)'], top: 5, right: 20 },
+                            grid: { left: '3%', right: '4%', bottom: '8%', top: 45, containLabel: true },
+                            xAxis: { type: 'category', data: mNames },
+                            yAxis: { type: 'value' },
+                            series: [
+                                { name: '每月目标 (TPP)', type: 'line', connectNulls: false, step: 'end', lineStyle:{type:'dashed', width:2}, itemStyle: { color: 'rgba(245,158,11,0.9)' }, data: globalMonthTpp, label: {show:true, position:'top', color:'#d97706', fontSize: 10} },
+                                { name: '每月实销 (ST)', type: 'line', connectNulls: true, smooth: true, lineStyle: { width: 3 }, itemStyle: { color: '#3b82f6' }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{offset: 0, color: 'rgba(59,130,246,0.3)'}, {offset: 1, color: 'rgba(59,130,246,0)'}]) }, data: globalMonthSt, label: {show:true, position:'bottom', color:'#1d4ed8', fontWeight:'bold', fontSize: 10} }
+                            ]
+                        });
+
+                        getEl('globalMonthVerifyTable').innerHTML = `
+                            <thead class="bg-slate-50 text-slate-600">
+                                <tr>
+                                    <th class="py-1 px-2 border border-slate-200">${targetYear}年月度汇总</th>
+                                    ${mNames.map(m => `<th class="py-1 px-1.5 border border-slate-200">${m}</th>`).join('')}
+                                    <th class="py-1 px-2 border border-slate-200 bg-blue-50 text-blue-800 font-bold">各月累加合计</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="py-1 px-2 bg-amber-50/50 border border-slate-200 font-bold text-amber-700">每月 TPP 目标</td>
+                                    ${globalMonthTpp.map(v => `<td class="py-1 px-1.5 border border-slate-200 font-medium text-amber-700">${v !== null ? v.toLocaleString() : '-'}</td>`).join('')}
+                                    <td class="py-1 px-2 border border-slate-200 bg-amber-50 font-black text-amber-800">${totalChartMonthTpp.toLocaleString()}</td>
+                                </tr>
+                                <tr>
+                                    <td class="py-1 px-2 bg-blue-50/50 border border-slate-200 font-bold text-blue-700">每月 ST 实销</td>
+                                    ${globalMonthSt.map(v => `<td class="py-1 px-1.5 border border-slate-200 font-bold text-blue-600">${v !== null ? v.toLocaleString() : '-'}</td>`).join('')}
+                                    <td class="py-1 px-2 border border-slate-200 bg-blue-50 font-black text-blue-800">${sMonthSumSt.toLocaleString()}</td>
+                                </tr>
+                            </tbody>
+                        `;
+                    } catch(e){}
+
+                    try {
+                        charts.actTypePerf.setOption({
+                            title: { text: '建店类别 业绩贡献度 (含存续老店)', textStyle: { fontSize: 14, color: '#334155', fontWeight:'bold' }, left: 'center', top: 5 },
+                            tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                            legend: { data: ['TPP', 'ST'], bottom: 0 },
+                            grid: { left: '3%', right: '4%', bottom: '15%', top: 40, containLabel: true },
+                            xAxis: { type: 'category', data: ['New(新建)', 'Refurbish(翻改/续约)', 'Retained(存续老店)'] },
+                            yAxis: { type: 'value' },
+                            series: [
+                                { name: 'TPP', type: 'bar', barGap: 0, itemStyle: { color: '#cbd5e1' }, data: [actPerf['New'].tpp, actPerf['Refurbish'].tpp, actPerf['Retained'].tpp] },
+                                { name: 'ST', type: 'bar', itemStyle: { color: '#3b82f6' }, label: {show:true, position:'top'}, data: [actPerf['New'].st, actPerf['Refurbish'].st, actPerf['Retained'].st] }
+                            ]
+                        });
+                    } catch(e){}
+
+                    try {
+                        charts.regionPerf.setOption({
+                            title: { text: '四大区 目标 vs 实销达成', textStyle: { fontSize: 14, color: '#334155', fontWeight:'bold' }, left: 'center', top: 5 },
+                            tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                            legend: { data: ['TPP', 'ST'], bottom: 0 },
+                            grid: { left: '3%', right: '4%', bottom: '15%', top: 40, containLabel: true },
+                            xAxis: { type: 'category', data: ['East', 'North', 'South', 'Central'] },
+                            yAxis: { type: 'value' },
+                            series: [
+                                { name: 'TPP', type: 'bar', barGap: 0, itemStyle: { color: '#cbd5e1' }, data: [regPerf['East'].tpp, regPerf['North'].tpp, regPerf['South'].tpp, regPerf['Central'].tpp] },
+                                { name: 'ST', type: 'bar', itemStyle: { color: '#10b981' }, label: {show:true, position:'top'}, data: [regPerf['East'].st, regPerf['North'].st, regPerf['South'].st, regPerf['Central'].st] }
+                            ]
+                        });
+                    } catch(e){}
+
+                    const commonOpt = { tooltip: { trigger: 'item', formatter: '{b} : {c} ({d}%)' }, title: { textStyle: { fontSize: 13, color: '#475569' }, left: 'center', top: 5 } };
+                    try{ charts.type.setOption({ ...commonOpt, title: { ...commonOpt.title, text: '点击钻取: 门店级别' }, series: [{ type: 'pie', radius: ['45%', '70%'], center: ['50%', '55%'], label: { show:false }, data: Object.keys(cnt.type).map(k => ({ name: k, value: cnt.type[k], itemStyle: { opacity: (activeFilters.levels.size > 0 && !activeFilters.levels.has(k)) ? 0.3 : 1 } })).sort((a,b)=>b.value-a.value) }] }); }catch(e){}
+                    try{ charts.tier.setOption({ ...commonOpt, title: { ...commonOpt.title, text: '点击钻取: 城市线级' }, series: [{ type: 'pie', radius: '60%', center: ['50%', '55%'], label: { show:false }, data: Object.keys(cnt.tier).map(k => ({ name: k, value: cnt.tier[k], itemStyle: { opacity: (activeFilters.tiers.size > 0 && !activeFilters.tiers.has(k)) ? 0.3 : 1 } })).sort((a,b)=>b.value-a.value) }] }); }catch(e){}
+                    
+                    const expColors = (name) => activeFilters.expiry && activeFilters.expiry !== name ? '#cbd5e1' : (name==='已过期'?'#ef4444':(name==='0-6个月'?'#f59e0b':(name==='6-12个月'?'#3b82f6':'#10b981')));
+                    try{ charts.expiry.setOption({ tooltip: { trigger: 'item' }, title: { ...commonOpt.title, text: '点击钻取: 剩余期' }, grid: { left: '15%', right: '5%', bottom: '15%', top: '25%' }, xAxis: { type: 'category', data: ['已过期', '0-6个月', '6-12个月', '1年以上'], axisLabel: { fontSize: 10 } }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: [{ name:'已过期', value: cnt.expiry['已过期'], itemStyle: { color: expColors('已过期') } }, { name:'0-6个月', value: cnt.expiry['0-6个月'], itemStyle: { color: expColors('0-6个月') } }, { name:'6-12个月', value: cnt.expiry['6-12个月'], itemStyle: { color: expColors('6-12个月') } }, { name:'1年以上', value: cnt.expiry['1年以上'], itemStyle: { color: expColors('1年以上') } }], label: { show: true, position: 'top' } }] }); }catch(e){}
+                    
+                    const curAchSource = achChartMode === 'contract' ? cnt.achContract : cnt.achYear;
+                    const curActiveSet = achChartMode === 'contract' ? activeFilters.contractAchievements : activeFilters.achievements;
+                    getEl('achChartTitle').innerText = achChartMode === 'contract' ? `【合约期】达成分布` : `【${targetYear}年】达成分布`;
+                    const achColors = (name) => {
+                        let isActive = false;
+                        if (curActiveSet.size === 0) isActive = true;
+                        else if (name==='100%+' && curActiveSet.has('>=100')) isActive = true;
+                        else if (name==='80-100%' && curActiveSet.has('80-100')) isActive = true;
+                        else if (name==='50-80%' && curActiveSet.has('50-80')) isActive = true;
+                        else if (name==='<50%' && curActiveSet.has('<50')) isActive = true;
+                        if(!isActive) return '#cbd5e1';
+                        return (name==='100%+'?'#10b981':(name==='80-100%'?(achChartMode==='contract'?'#7c3aed':'#3b82f6'):(name==='50-80%'?'#f59e0b':'#ef4444')));
+                    };
+                    try{ charts.achieve.setOption({ tooltip: { trigger: 'item' }, grid: { left: '15%', right: '5%', bottom: '15%', top: '15%' }, xAxis: { type: 'category', data: ['100%+', '80-100%', '50-80%', '<50%'], axisLabel: { fontSize: 10 } }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: [{ name:'100%+', value: curAchSource['100%+'], itemStyle: { color: achColors('100%+') } }, { name:'80-100%', value: curAchSource['80-100%'], itemStyle: { color: achColors('80-100%') } }, { name:'50-80%', value: curAchSource['50-80%'], itemStyle: { color: achColors('50-80%') } }, { name:'<50%', value: curAchSource['<50%'], itemStyle: { color: achColors('<50%') } }], label: { show: true, position: 'top' } }] }); }catch(e){}
+                    
+                    try {
+                        let maxCount = Math.max(...Object.values(cnt.map), 10);
+                        const curRegion = getEl('regionSelect').value || 'All';
+                        const curProv = getEl('provinceSelect').value;
+                        const mapConfig = { 'East': { center: [119, 31], zoom: 3 }, 'South': { center: [113, 24], zoom: 3.5 }, 'North': { center: [116, 40], zoom: 2.2 }, 'Central': { center: [112, 31], zoom: 3 }, 'All': { center: [104.2, 36], zoom: 1.2 } };
+                        const provConfig = { '广东省': { center: [113, 23], zoom: 5 }, '浙江省': { center: [120, 29], zoom: 5 }, '江苏省': { center: [119, 33], zoom: 5 }, '山东省': { center: [118, 36], zoom: 5 }, '四川省': { center: [104, 30], zoom: 4 }, '河南省': { center: [113, 34], zoom: 5 }, '上海市':{center:[121.4,31.2],zoom:7}, '北京市':{center:[116.4,40.2],zoom:7}, '天津市':{center:[117.2,39.1],zoom:7}, '重庆市':{center:[106.5,29.5],zoom:6} };
+                        let targetCenter = mapConfig[curRegion].center; let targetZoom = mapConfig[curRegion].zoom;
+                        if(curProv && provConfig[curProv]) { targetCenter = provConfig[curProv].center; targetZoom = provConfig[curProv].zoom; }
+                        
+                        charts.map.setOption({
+                            title: { text: '点击省份钻取: 区域分布热力图', textStyle: { fontSize: 14, color: '#334155', fontWeight:'bold' }, left: 15, top: 15 },
+                            tooltip: { trigger: 'item', formatter: '{b}<br/>门店数量: {c} 家' },
+                            visualMap: { min: 0, max: maxCount, left: 15, bottom: 15, calculable: true, inRange: { color: ['#e0f2fe', '#0284c7'] } },
+                            series: [{ type: 'map', mapType: 'china', roam: true, center: targetCenter, zoom: targetZoom, label: { show: (curRegion !== 'All' || curProv), fontSize: 10, color: '#334155' }, data: Object.keys(cnt.map).map(k => ({ name: k, value: cnt.map[k] })) }]
+                        }, true);
+                    } catch(e) {}
+
+                    // 渲染销售建店排行榜及顶部四个类别汇总卡片
+                    try {
+                        let allAsms = Object.keys(asmActs).map(k => ({
+                            name: k,
+                            newVal: asmActs[k].New || 0,
+                            refurVal: asmActs[k].Refurbish || 0,
+                            retVal: showRetainedInChart ? (asmActs[k].Retained || 0) : 0,
+                            totalVal: (asmActs[k].New || 0) + (asmActs[k].Refurbish || 0) + (showRetainedInChart ? (asmActs[k].Retained || 0) : 0)
+                        })).filter(item => item.totalVal > 0);
+
+                        const displayedTotal = sumNewAll + sumRefurAll + (showRetainedInChart ? sumRetAll : 0);
+                        getEl('rank-sum-total').innerText = displayedTotal.toLocaleString();
+                        getEl('rank-sum-new').innerText = sumNewAll.toLocaleString();
+                        getEl('rank-sum-refur').innerText = sumRefurAll.toLocaleString();
+                        getEl('rank-sum-ret').innerText = sumRetAll.toLocaleString();
+                        getEl('rank-sum-asm').innerText = allAsms.length.toLocaleString();
+                        const retTag = getEl('rank-ret-status-tag');
+                        if (retTag) {
+                            retTag.innerText = showRetainedInChart ? '已计入柱图' : '未计入柱图';
+                            retTag.className = showRetainedInChart ? 'text-[10px] text-blue-600 font-bold' : 'text-[10px] text-slate-400';
+                        }
+
+                        allAsms.sort((a, b) => {
+                            let diff = 0;
+                            if(rankSortConfig.type === 'total') diff = a.totalVal - b.totalVal;
+                            else if(rankSortConfig.type === 'new') diff = a.newVal - b.newVal;
+                            else if(rankSortConfig.type === 'refur') diff = a.refurVal - b.refurVal;
+                            return rankSortConfig.order === 'desc' ? diff : -diff;
+                        });
+
+                        const names = allAsms.map(v => v.name);
+                        const newData = allAsms.map(v => ({ name: v.name, value: v.newVal, itemStyle: { opacity: (activeFilters.asm && activeFilters.asm !== v.name) ? 0.25 : 1 } }));
+                        const refurbishData = allAsms.map(v => ({ name: v.name, value: v.refurVal, itemStyle: { opacity: (activeFilters.asm && activeFilters.asm !== v.name) ? 0.25 : 1 } }));
+                        const retainedData = allAsms.map(v => ({ name: v.name, value: v.retVal, itemStyle: { opacity: (activeFilters.asm && activeFilters.asm !== v.name) ? 0.25 : 1 } }));
+                        
+                        let zoomStart = 0;
+                        if (names.length > 15) {
+                            zoomStart = 100 - (15 / names.length) * 100;
+                        }
+
+                        const legendData = showRetainedInChart 
+                            ? ['New (新建)', 'Refurbish (翻改/续约)', 'Retained (存续老店)'] 
+                            : ['New (新建)', 'Refurbish (翻改/续约)'];
+
+                        const rankSeries = [
+                            { name: 'New (新建)', type: 'bar', stack: 'total', itemStyle: { color: '#10b981' }, label: { show: true, formatter: p => p.value > 0 ? p.value : '' }, data: newData },
+                            { name: 'Refurbish (翻改/续约)', type: 'bar', stack: 'total', itemStyle: { color: '#3b82f6' }, label: { show: true, formatter: p => p.value > 0 ? p.value : '' }, data: refurbishData }
+                        ];
+                        if (showRetainedInChart) {
+                            rankSeries.push({ name: 'Retained (存续老店)', type: 'bar', stack: 'total', itemStyle: { color: '#94a3b8' }, label: { show: true, formatter: p => p.value > 0 ? p.value : '' }, data: retainedData });
+                        }
+
+                        charts.ranking.setOption({
+                            tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                            legend: { data: legendData, top: 0, left: 10, textStyle: { fontSize: 11 } },
+                            grid: { left: '3%', right: '9%', bottom: '3%', top: 24, containLabel: true },
+                            dataZoom: [{ type: 'slider', yAxisIndex: 0, width: 12, right: 10, start: zoomStart, end: 100 }],
+                            xAxis: { type: 'value', minInterval: 1 },
+                            yAxis: { type: 'category', data: names, axisLabel: { fontWeight: 'bold' }, triggerEvent: true },
+                            series: rankSeries
+                        }, true);
+                    } catch(e) {}
+                } catch(e) { console.error("Update Dashboards Error:", e); }
+            }
+
+            if (window.INJECTED_GASN_DATA) {
+                globalStoreMap = window.INJECTED_GASN_DATA;
+                getEl('dbIndicator').classList.replace('bg-slate-300', 'bg-emerald-500');
+                getEl('dbStatusText').innerHTML = `本地数据已就绪 (共 ${Object.keys(globalStoreMap).length} 店)`;
+                try { buildTableDataAndRender(); } catch (e) { console.error(e); }
+            } else {
+                localforage.config({ name: 'GASNDatabase', storeName: 'gasn_data' });
+                try {
+                    const savedData = await localforage.getItem('customer_store_map_final');
+                    if (savedData && Object.keys(savedData).length > 0) {
+                        globalStoreMap = savedData;
+                        getEl('dbIndicator').classList.replace('bg-slate-300', 'bg-emerald-500');
+                        getEl('dbStatusText').innerHTML = `数据已就绪 (共 ${Object.keys(globalStoreMap).length} 店)`;
+                        try { buildTableDataAndRender(); } catch (e) { console.error(e); }
+                    }
+                } catch (err) { console.error("Data load failed:", err); }
+            }
+
+        });
+    </script>
+</body>
+</html>
